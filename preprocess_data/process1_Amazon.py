@@ -4,7 +4,7 @@ import simplejson
 import numpy as np
 
 def parse(filename):
-    f = gzip.open(filename, 'rt')  # 'rt' means read in text mode
+    f = gzip.open(filename, 'rt')
     entry = {}
     times = 0
     for l in f:
@@ -59,14 +59,13 @@ def process_file(filename):
 
     return np.array(processed_data)
 
-# # 示例用法
+
 filename = "all.txt.gz"
 data_array = process_file(filename)
 
-# 将 NumPy 数组保存到 CSV 文件中
+
 csv_filename = "Amazon_data.csv"
 np.savetxt(csv_filename, data_array, delimiter=" ", fmt='%d %d %.1f %d', header="user_id product_id score time", comments='%')
 
-print(f"Data successfully saved to {csv_filename}")
 
 

@@ -10,7 +10,6 @@ from torch.utils.tensorboard import SummaryWriter
 from DynamicDatasetLoader import DynamicDataset_loader
 from mode import Model, einsum
 from Component import *
-# from torchviz import make_dot
 import pickle
 import torch.nn.functional as F
 import torch.utils.data
@@ -18,17 +17,8 @@ from prepare_data import generateDataset
 from torch.cuda.amp import GradScaler, autocast
 
 os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
-#
-# os.environ["PATH"] += os.pathsep + '/home/huxiurui/usr/local/bin'
-
-def custom_collate_fn(batch):
-    # 这里假设batch是一个包含DGLGraph对象的列表
-    # 可以根据需要对DGLGraph进行处理，将其转换为适合处理的格式
-    # 这里简单地返回原始的DGLGraph列表
-    return batch
 
 def initialize():
-    #torch.manual_seed(0)
     model = Model(args).to(args.device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     return model, optimizer
@@ -41,21 +31,16 @@ if __name__ == '__main__':
     torch.manual_seed(SEED)
     torch.cuda.manual_seed_all(SEED)
     np.random.seed(SEED)
-    print(nowdt())
     print(args)
-    print(f'args.scalability_time:{args.scalability_time}')
-    print(f'args.scalability_node:{args.scalability_node}')
-    print(f'arg.scalability_num:{args.scalability_num}')
+
     if args.dataset == 'digg':
         args.dataset = 'digg_all'
 
-    # tensorboard
     tb_path = f'runs/{args.dataset}/{args.data_index}_{args.train_ratio}_{args.anomaly_ratio}_{args.snap_size}/'
     if not os.path.exists(tb_path):
         os.makedirs(tb_path)
     tb = SummaryWriter(log_dir=tb_path + f"{time.strftime('%m-%d,%H:%M:%S')}")
 
-    # log
     log_path = f'logs/{args.dataset}/{args.data_index}_{args.train_ratio}_{args.anomaly_ratio}_{args.snap_size}_{time.time()}'
     if not os.path.exists(log_path):
         os.makedirs(log_path)
@@ -63,13 +48,11 @@ if __name__ == '__main__':
     log = open(log_file, "a")
     log.writelines(time.strftime('%m-%d %H:%M:%S') + "\n")
 
-    # checkpoints
     checkpoints_path = f'checkpoints/{args.dataset}/{args.data_index}_{args.train_ratio}_{args.anomaly_ratio}_{args.snap_size}_{time.time()}'
     if not os.path.exists(checkpoints_path):
         os.makedirs(checkpoints_path)
     args.checkpoints_path = os.path.join(checkpoints_path, 'checkpoint.pt')
 
-    # Init dataloader
     dataset = {}
     if args.dataset not in [ 'digg_all', 'amazon', 'yelp']:
         raise NotImplementedError
@@ -78,7 +61,6 @@ if __name__ == '__main__':
     generateDataset(args.dataset, args.snap_size, train_per=args.train_ratio, anomaly_per=args.anomaly_ratio, args=args, on_test=args.onTest)
 
 
-    print("0_prepare_data has done")
     dataset = DynamicDataset_loader(args= args)
     dataset = dataset.load()
     t_embedding_begin = time.time()
@@ -89,7 +71,6 @@ if __name__ == '__main__':
         t_embedding_begin = time.time()
         raw_embeddings, wl_embeddings, hop_embeddings, int_embeddings, time_embeddings, type_embeddings, neighbour_snaps, hsg_snaps, edges_snaps = \
             generate_embedding(dataset, args)
-        print(f'generate_embedding() uses {time.time() - t_embedding_begin}')
 
         os.makedirs(GE_path)
         with open('data/temp/' + f'{args.dataset}/' + args.dataset + '_GE'+ '_' + str(0) + '_' + str(args.train_ratio) + '_' + str(args.anomaly_ratio) + '.pkl', 'wb')\
@@ -102,10 +83,7 @@ if __name__ == '__main__':
             raw_embeddings, wl_embeddings, hop_embeddings, int_embeddings, time_embeddings, type_embeddings, neighbour_snaps, hsg_snaps, edges_snaps = pickle.load(f)
 
 
-    print(f'generate_embedding() uses {time.time() - t_embedding_begin}')
 
-    # Start Training
-    print("Now begin training!")
     max_epoch = args.epochs
     model, optimizer = initialize()
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=max_epoch*len(dataset['snap_train']),
@@ -141,7 +119,6 @@ if __name__ == '__main__':
         snap['y'] = dataset['y'][i].unsqueeze(1).float()
         datas_test.append(snap)
     datas_test = torch.utils.data.DataLoader(datas_test, batch_size=1, num_workers=4,pin_memory=True)
-    time0 = time.time()
 
 
     mask_file = 'data/temp/' + f'{args.dataset}/' + args.dataset + '_MK'+ '_' + str(0) + '_' + str(args.train_ratio) + '_' + str(args.anomaly_ratio) + '.pkl'
@@ -162,24 +139,14 @@ if __name__ == '__main__':
             as f:
             mask_hsg_rs_snaps, combined_hsgs = pickle.load(f)
 
-    time1 =time.time()
-    print(f'mask_hsg_rs:{time1 - time0}')
 
 
     step_num = 0
     max_auc = 0
     max_auc_epoch = -1
     max_sims = None
-    time4train = 0
-    time4test = 0
-    time_begintrain = time.time()
     early_stopping = EarlyStopping(args=args, patience=args.patience, verbose=True)
-    print(f'model\'s device:{next(model.parameters()).device}')
-    print(f'Model #Params: {get_n_params(model)}.')
     for epoch in range(max_epoch):
-        time_epoch_start = time.time()
-
-
 
         with torch.autograd.set_detect_anomaly(True):
             model.train()
@@ -199,7 +166,6 @@ if __name__ == '__main__':
                 time_embedding = torch.squeeze(data['time_embedding']).to(args.device)
                 type_embedding = torch.squeeze(data['type_embedding']).to(args.device)
                 neighbour_edges = torch.squeeze(data['neighbour_edges']).to(args.device)
-                # hsg_edges = data['hsg_edges']
                 edges_snap = torch.squeeze(data['edges_snap']).to(args.device)
                 y = data['y'][0].to(args.device)
                 hsg_edges = hsg_snaps[snap]
@@ -209,11 +175,6 @@ if __name__ == '__main__':
                     combined_graph_data = combined_hsgs[snap]
                 else:
                     mask_hsg_rs = None
-
-                if snap == 9:
-                    print(1)
-                time1 = time.time()
-
 
                 bce_loss1, reg_loss1, nce_loss1, all_z, all_node_idx, _ = model(y, dataset['id_type_map'], int_embedding,
                                                                                hop_embedding, time_embedding,
@@ -229,34 +190,25 @@ if __name__ == '__main__':
                 loss = bce_loss1.mean()
                 loss = loss + reg_loss1 + nce_loss1
 
-
                 optimizer.zero_grad()
-                loss.backward()#这也会增加显存17815-》19470
+                loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 10)
                 optimizer.step()
                 step_num += 1
                 scheduler.step()
-                print('epoch:{}, snap:{}, loss:{:.4f}, time{}'
-                      .format(epoch, snap, loss.detach().item(), time.time() - time1))
-
-
 
 
             if (epoch + 1) > 0:
-                time_begintest = time.time()
                 model.eval()
-                print('test')
                 preds = []
                 sims = {}
                 for i, data in enumerate(datas_test):
-                    time1 = time.time()
                     snap = len(dataset['snap_train']) + i
                     int_embedding = torch.squeeze(data['int_embedding']).to(args.device)
                     hop_embedding = torch.squeeze(data['hop_embedding']).to(args.device)
                     time_embedding = torch.squeeze(data['time_embedding']).to(args.device)
                     type_embedding = torch.squeeze(data['type_embedding']).to(args.device)
                     neighbour_edges = torch.squeeze(data['neighbour_edges']).to(args.device)
-                    # hsg_edges = data['hsg_edges']
                     edges_snap = torch.squeeze(data['edges_snap']).to(args.device)
                     y = data['y'][0].to(args.device)
                     hsg_edges = hsg_snaps[snap]
@@ -282,8 +234,7 @@ if __name__ == '__main__':
 
                     pred = predict.squeeze().to('cpu')
                     preds.append(pred)
-                    print('epoch:{}, snap:{}, bce_loss:{:.4f}, time{}'
-                          .format(epoch, snap, bce_loss1.squeeze().mean().detach().item(), time.time() - time1))
+
 
                 y_test = dataset['y'][min(dataset['snap_test']):max(dataset['snap_test']) + 1]
                 y_test = [y_snap.numpy() for y_snap in y_test]
@@ -295,20 +246,15 @@ if __name__ == '__main__':
 
 
 
-                for i in range(len(dataset['snap_test'])):
-                    print("Snap: %02d | AUC: %.4f" % (dataset['snap_test'][i], aucs[i]))
+
                 print(
                     'TOTAL AUC:{:.4f}  bce_loss:{:.4f}  MAX_AUC:{:.4f} MAX_AUC_EPOCH:{:.4f}'.format(
                         auc_full, bce_loss2.squeeze().mean().detach().item(), max_auc, max_auc_epoch))
-                print(f'******* epoch:{epoch} totally uses {time.time() - time_epoch_start}s')
-                time4test = time4test + time.time() - time_begintest
+
                 early_stopping(auc_full, model)
                 if early_stopping.early_stop:
                     print("Early stopping")
                     break
-
-
-    time4train = time.time() - time_begintrain - time4test
 
     tb.close()
 

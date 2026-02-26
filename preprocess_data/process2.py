@@ -3,7 +3,6 @@ import time
 import os
 import multiprocessing
 import torch
-# import pandas
 
 def user_id_to_idx(inters: np.array):
     inter_list = []
@@ -25,7 +24,6 @@ def user_id_to_idx(inters: np.array):
     return torch.stack(inter_list), userToidx
 
 def rate_id_to_idx(write_inters: np.array, user_user_dict: dict):
-    # write_inters: userID, objectID
     write_list = []
     writeToidx, objectToidx = {}, {}
     if user_user_dict:
@@ -94,17 +92,16 @@ def processDataset(dataset):
         inters_user, user_userToidx = user_id_to_idx(friends[:, [2, 3]])
         inters_rate, rate_userToidx, rate_objectToidx, write_user_num = rate_id_to_idx(votes[:, [1, 2]], user_userToidx)
 
-        start_time = time.time()
 
-        dataRaw[0:np.size(votes, 0), 0] = inters_rate.numpy()[0:np.size(votes, 0), 0]     #起点
-        dataRaw[0:np.size(votes, 0), 1] = inters_rate.numpy()[0:np.size(votes, 0), 1] + write_user_num    #终点
-        dataRaw[0:np.size(votes, 0), 3] = votes[0:np.size(votes, 0), 0]     #时间戳
+        dataRaw[0:np.size(votes, 0), 0] = inters_rate.numpy()[0:np.size(votes, 0), 0]
+        dataRaw[0:np.size(votes, 0), 1] = inters_rate.numpy()[0:np.size(votes, 0), 1] + write_user_num
+        dataRaw[0:np.size(votes, 0), 3] = votes[0:np.size(votes, 0), 0]
         dataRaw[0:np.size(votes, 0), 2] = 0
 
-        dataRaw[np.size(votes, 0):np.size(votes, 0)+np.size(friends, 0), 0] = inters_user.numpy()[0:np.size(friends, 0), 0]   #起点
-        dataRaw[np.size(votes, 0):np.size(votes, 0)+np.size(friends, 0), 1] = inters_user.numpy()[0:np.size(friends, 0), 1]   #终点
-        dataRaw[np.size(votes, 0):np.size(votes, 0)+np.size(friends, 0), 3] = friends[0:np.size(friends, 0), 1]   #时间戳
-        dataRaw[np.size(votes, 0):np.size(votes, 0)+np.size(friends, 0), 4] = friends[0:np.size(friends, 0), 0]     #rating
+        dataRaw[np.size(votes, 0):np.size(votes, 0)+np.size(friends, 0), 0] = inters_user.numpy()[0:np.size(friends, 0), 0]
+        dataRaw[np.size(votes, 0):np.size(votes, 0)+np.size(friends, 0), 1] = inters_user.numpy()[0:np.size(friends, 0), 1]
+        dataRaw[np.size(votes, 0):np.size(votes, 0)+np.size(friends, 0), 3] = friends[0:np.size(friends, 0), 1]
+        dataRaw[np.size(votes, 0):np.size(votes, 0)+np.size(friends, 0), 4] = friends[0:np.size(friends, 0), 0]
         dataRaw[np.size(votes, 0):np.size(votes, 0)+np.size(friends, 0), 2] = 1
 
         dataRaw = dataRaw[dataRaw[:,3].argsort()]
@@ -119,12 +116,11 @@ def processDataset(dataset):
         user_userToidx = {}
         inters_rate, rate_userToidx, rate_objectToidx, write_user_num = rate_id_to_idx(votes[:, [0, 1]], user_userToidx)
 
-        start_time = time.time()
 
-        dataRaw[0:np.size(votes, 0), 0] = inters_rate.numpy()[0:np.size(votes, 0), 0]  # 起点
-        dataRaw[0:np.size(votes, 0), 1] = inters_rate.numpy()[0:np.size(votes, 0), 1] + write_user_num  # 终点
-        dataRaw[0:np.size(votes, 0), 3] = votes[0:np.size(votes, 0), 3]  # 时间戳
-        dataRaw[0:np.size(votes, 0), 2] = 0 #rate
+        dataRaw[0:np.size(votes, 0), 0] = inters_rate.numpy()[0:np.size(votes, 0), 0]
+        dataRaw[0:np.size(votes, 0), 1] = inters_rate.numpy()[0:np.size(votes, 0), 1] + write_user_num
+        dataRaw[0:np.size(votes, 0), 3] = votes[0:np.size(votes, 0), 3]
+        dataRaw[0:np.size(votes, 0), 2] = 0
         dataRaw[0:np.size(votes, 0), 4] = votes[0:np.size(votes, 0), 2]
 
 
@@ -140,12 +136,10 @@ def processDataset(dataset):
         user_userToidx = {}
         inters_rate, rate_userToidx, rate_objectToidx, write_user_num = rate_id_to_idx(votes[:, [0, 1]], user_userToidx)
 
-        start_time = time.time()
-
-        dataRaw[0:np.size(votes, 0), 0] = inters_rate.numpy()[0:np.size(votes, 0), 0]  # 起点
-        dataRaw[0:np.size(votes, 0), 1] = inters_rate.numpy()[0:np.size(votes, 0), 1] + write_user_num  # 终点
-        dataRaw[0:np.size(votes, 0), 3] = votes[0:np.size(votes, 0), 3]  # 时间戳
-        dataRaw[0:np.size(votes, 0), 2] = 0  # 表示类型为rate
+        dataRaw[0:np.size(votes, 0), 0] = inters_rate.numpy()[0:np.size(votes, 0), 0]
+        dataRaw[0:np.size(votes, 0), 1] = inters_rate.numpy()[0:np.size(votes, 0), 1] + write_user_num
+        dataRaw[0:np.size(votes, 0), 3] = votes[0:np.size(votes, 0), 3]
+        dataRaw[0:np.size(votes, 0), 2] = 0
         dataRaw[0:np.size(votes, 0), 4] = votes[0:np.size(votes, 0), 2]
         dataRaw[0:np.size(votes, 0), 5] = votes[0:np.size(votes, 0), 4]
 

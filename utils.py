@@ -15,34 +15,30 @@ import copy
 
 def args_parser():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--device', type=str, default='cuda:0', help='specify cuda devices')#
+    parser.add_argument('--device', type=str, default='cuda:0', help='specify cuda devices')
 
-    # ===== dataset parameters =====
-    parser.add_argument('--dataset', type=str, default='yelp',choices=['digg_all', 'amazon', 'yelp'], help='name of dataset')#
-    parser.add_argument('--train_ratio', type=float, default=0.8, help='')#
-    parser.add_argument('--anomaly_ratio', type=float, default=0.1, help='')#
-    parser.add_argument('--snap_size', type=int, default=2500, help='')  #
-    parser.add_argument('--data_index', type=int, default=10, help='')  #
-    parser.add_argument('--seed', type=int, default=2020, help='')  #
+    parser.add_argument('--dataset', type=str, default='yelp',choices=['digg_all', 'amazon', 'yelp'], help='name of dataset')
+    parser.add_argument('--train_ratio', type=float, default=0.8, help='')
+    parser.add_argument('--anomaly_ratio', type=float, default=0.1, help='')
+    parser.add_argument('--snap_size', type=int, default=2500, help='')
+    parser.add_argument('--data_index', type=int, default=10, help='')
+    parser.add_argument('--seed', type=int, default=2020, help='')
     parser.add_argument('--noise_ratio', type=float, default=0.0, help='noise ratio')
-    parser.add_argument('--anomaly_per_test', type=float, default=0.15, help='')#
-    parser.add_argument('--ano4test', type=bool, default=False, help='')  #
+    parser.add_argument('--anomaly_per_test', type=float, default=0.15, help='')
+    parser.add_argument('--ano4test', type=bool, default=False, help='')
 
-    # ===== training parameters =====
-    parser.add_argument('--epochs', type=int, default=250, help='training epochs')#
-    parser.add_argument('--lr', type=float, default=0.03, help='learning rate')#
+    parser.add_argument('--epochs', type=int, default=250, help='training epochs')
+    parser.add_argument('--lr', type=float, default=0.03, help='learning rate')
     parser.add_argument('--weight_decay', type=float, default=0.007, help='weight decay')
     parser.add_argument('--patience', type=int, default=70, help='patience for earlystop')
     parser.add_argument('--patience_delta', type=int, default=0.02, help='')
     parser.add_argument('--onTest', type=bool, default=False, help='is test')
 
-    # ===== hyper-parameters =====
-    parser.add_argument('--window_size', type=int, default=4, help='')##hp
-    parser.add_argument('--contrastive_window_size', type=int, default=1, help='')  #
+    parser.add_argument('--window_size', type=int, default=4, help='')
+    parser.add_argument('--contrastive_window_size', type=int, default=1, help='')
     parser.add_argument('--print_feq', type=int, default=10, help='')
-    parser.add_argument('--neighbour_num', type=int, default=13, help='')##hp
+    parser.add_argument('--neighbour_num', type=int, default=13, help='')
 
-    # ===== model parameters =====
     parser.add_argument('--layer_num', type=int, default=2, help='han layers')
     parser.add_argument('--x_dim', type=int, default=256, help='input channels of the model')
     parser.add_argument('--h_dim', type=int, default=256, help='hidden channels of the model')
@@ -83,87 +79,6 @@ def args_parser():
     return args
 
 
-def compare_dgl_graphs(graph1, graph2):
-    """
-    比较两个 DGLGraph 是否相等
-    """
-    # 比较节点数量和边数量
-    if graph1.number_of_nodes() != graph2.number_of_nodes():
-        return False
-    if graph1.number_of_edges() != graph2.number_of_edges():
-        return False
-
-    # 比较每种节点类型的数量
-    if set(graph1.ntypes) != set(graph2.ntypes):
-        return False
-    for ntype in graph1.ntypes:
-        if graph1.num_nodes(ntype) != graph2.num_nodes(ntype):
-            return False
-
-    # 比较每种边类型的数量
-    if set(graph1.etypes) != set(graph2.etypes):
-        return False
-    for etype in graph1.etypes:
-        if graph1.num_edges(etype) != graph2.num_edges(etype):
-            return False
-
-    # 比较节点特征
-    for ntype in graph1.ntypes:
-        for key in graph1.nodes[ntype].data:
-            if key not in graph2.nodes[ntype].data:
-                return False
-            if isinstance(graph1.nodes[ntype].data[key], dict):
-                for sub_key in graph1.nodes[ntype].data[key]:
-                    if sub_key not in graph2.nodes[ntype].data[key]:
-                        return False
-                    if not torch.equal(graph1.nodes[ntype].data[key][sub_key], graph2.nodes[ntype].data[key][sub_key]):
-                        return False
-            else:
-                if not torch.equal(graph1.nodes[ntype].data[key], graph2.nodes[ntype].data[key]):
-                    return False
-
-    # 比较边特征
-    for etype in graph1.etypes:
-        for key in graph1.edges[etype].data:
-            if key not in graph2.edges[etype].data:
-                return False
-            if isinstance(graph1.edges[etype].data[key], dict):
-                for sub_key in graph1.edges[etype].data[key]:
-                    if sub_key not in graph2.edges[etype].data[key]:
-                        return False
-                    if not torch.equal(graph1.edges[etype].data[key][sub_key], graph2.edges[etype].data[key][sub_key]):
-                        return False
-            else:
-                if not torch.equal(graph1.edges[etype].data[key], graph2.edges[etype].data[key]):
-                    return False
-
-    # 比较每种边类型的图结构
-    for etype in graph1.etypes:
-        src1, dst1 = graph1.edges(etype=etype)
-        src2, dst2 = graph2.edges(etype=etype)
-        if not torch.equal(src1, src2) or not torch.equal(dst1, dst2):
-            return False
-
-    return True
-
-
-def compare_nested_lists(list1, list2):
-    """
-    比较两个嵌套列表是否相等，嵌套列表中包含 DGLGraph 对象
-    """
-    if len(list1) != len(list2):
-        return False
-
-    for sublist1, sublist2 in zip(list1, list2):
-        if len(sublist1) != len(sublist2):
-            return False
-
-        for graph1, graph2 in zip(sublist1, sublist2):
-            if not compare_dgl_graphs(graph1, graph2):
-                return False
-
-    return True
-
 def evaluate(snap_test, trues, preds):
     aucs = {}
     for snap in range(len(snap_test)):
@@ -183,26 +98,6 @@ def compute_zero_WL(node_list, link_list):
         WL_dict[i] = 0
     return WL_dict
 
-def choose_metapath(metapaths, S, source_node, k):
-    metapaths = np.array(metapaths.cpu())
-    path_num = np.size(metapaths, 0)
-    # path_num = metapaths.size(0)
-    path_score = []
-    for i in range(path_num):
-        score = 0
-        for node in metapaths[i]:
-            if node == source_node:
-                continue
-            if node == -1:
-                break
-            score = score + S[source_node][node]
-        path_score.append(score)
-    sorted_indices = sorted(enumerate(path_score), key=lambda x: x[1], reverse=True)
-    top_k_indices = [idx for idx, _ in sorted_indices[:k]]
-
-    metapaths = metapaths[top_k_indices]
-    return metapaths
-
 def generate_hg_amazon(edges, num_nodes_dic, args):
     hg = dgl.heterograph({
         ('user', 'votes', 'item'): ([], []),
@@ -212,7 +107,7 @@ def generate_hg_amazon(edges, num_nodes_dic, args):
     hg.add_nodes(num_nodes_dic['item'], ntype='item')
     for i, edge in enumerate(edges):
         if [edge[0], edge[1]] not in edges[0:i, :2].tolist():
-            if  edge[2] == 0:  # vote
+            if  edge[2] == 0:
                 hg.add_edges(edge[0], edge[1], etype='votes')
                 hg.add_edges(edge[1], edge[0], etype='re-votes')
             else:
@@ -238,10 +133,10 @@ def generate_hg_digg2(edges, num_nodes_dic, args):
     hg.add_nodes(num_nodes_dic['item'], ntype='item')
     for i, edge in enumerate(edges):
         if [edge[0], edge[1]] not in edges[0:i,:2].tolist():
-            if edge[2] == 1:    #trust
+            if edge[2] == 1:
                 hg.add_edges(edge[0], edge[1], etype='trusts')
                 hg.add_edges(edge[1], edge[0], etype='re-trusts')
-            elif edge[2] == 0:  #vote
+            elif edge[2] == 0:
                 hg.add_edges(edge[0], edge[1], etype='votes')
                 hg.add_edges(edge[1], edge[0], etype='re-votes')
         else:
@@ -249,50 +144,6 @@ def generate_hg_digg2(edges, num_nodes_dic, args):
     hg = hg.to(torch.device(args.device))
     return hg
 
-def generate_hg_digg(edges, num_nodes_dic, args):
-
-    for edge in edges:
-        if edge[1] >=15972 :
-            print(f"edge:{edge[0]}-->{edge[1]}")
-
-    edges_vote = edges[np.nonzero(edges[:, 2] == 0), 0:2][0]
-    edges_trust = edges[np.nonzero(edges[:, 2] == 1), 0:2][0]
-    temp1 = edges[np.nonzero(edges[:, 2] != 0), 0:2][0]
-    temp2 = np.unique(edges[:, 2])
-    temp3 = temp2
-
-    data_dic = {}
-    vote_user = np.transpose(edges_vote)[0]
-    vote_item = np.transpose(edges_vote)[1]
-    trust_user0 = np.transpose(edges_trust)[0]
-    trust_user1 = np.transpose(edges_trust)[1]
-    data_dic[('user', 'votes', 'item')] = (torch.tensor(vote_user.squeeze()), torch.tensor(vote_item.squeeze()))
-    data_dic[('item', 're-votes', 'user')] = (torch.tensor(vote_item.squeeze()), torch.tensor(vote_user.squeeze()))
-    if np.size(edges_vote, 0) > 1:
-        data_dic[('user', 'votes', 'item')] = (torch.tensor(vote_user.squeeze()), torch.tensor(vote_item.squeeze()))
-        data_dic[('item', 're-votes', 'user')] = (torch.tensor(vote_item.squeeze()), torch.tensor(vote_user.squeeze()))
-    elif np.size(edges_vote, 0) == 1:
-        data_dic[('user', 'votes', 'item')] = (torch.tensor(vote_user), torch.tensor(vote_item))
-        data_dic[('item', 're-votes', 'user')] = (torch.tensor(vote_item), torch.tensor(vote_user))
-    elif np.size(edges_vote, 0) == 0:
-        data_dic[('user', 'votes', 'item')] = ([], [])
-        data_dic[('item', 're-votes', 'user')] = ([], [])
-    if np.size(edges_trust, 0) > 1:
-        data_dic[('user', 'trusts', 'user')] = (
-        torch.tensor(trust_user0.squeeze()), (torch.tensor(trust_user1.squeeze())))
-        data_dic[('user', 're-trusts', 'user')] = (
-        torch.tensor(trust_user1.squeeze()), torch.tensor(trust_user0.squeeze()))
-    elif np.size(edges_trust, 0) == 1:
-        data_dic[('user', 'trusts', 'user')] = (torch.tensor(trust_user1), torch.tensor(trust_user1))
-        data_dic[('user', 're-trusts', 'user')] = (torch.tensor(trust_user1), torch.tensor(trust_user1))
-    elif np.size(edges_trust, 0) == 0:
-        data_dic[('user', 'trusts', 'user')] = ([], [])
-        data_dic[('user', 're-trusts', 'user')] = ([], [])
-        # : ,
-        # ('user', 're-trusts', 'user'):
-    hg = dgl.heterograph(data_dic, idtype=torch.int32, device=args.device, num_nodes_dict=num_nodes_dic)
-
-    return hg
 
 def create_metapath_amazon(hg:dgl.DGLGraph, edge, pathnum=3):
     srcnode = edge[0]
@@ -386,7 +237,6 @@ def compute_batch_hop(node_list, edges_all, num_snap, Ss, id_type_map ,args):
 
     k = args.neighbour_num
     window_size = args.window_size
-    device = args.device
     batch_hop_dicts = [None] * (window_size-1)
     s_ranking = [0] + list(range(k+1))
 
@@ -420,10 +270,8 @@ def compute_batch_hop(node_list, edges_all, num_snap, Ss, id_type_map ,args):
     for snap in range(window_size - 1, num_snap):
         print(f'snap:{snap}')
         batch_hop_dict = {}
-        # S = Ss[snap]
         edges = edges_all[snap]
         array_2d = edges[:, 0:2]
-        unique_rows = np.unique(array_2d, axis=0)
 
         hsg_edges = []
         num = 0
@@ -456,8 +304,8 @@ def compute_batch_hop(node_list, edges_all, num_snap, Ss, id_type_map ,args):
 
                 s = Ss[snap - lookback][edge[0]] + Ss[snap - lookback][edge[1]]
 
-                s[edge[0]] = -1000 # don't pick myself
-                s[edge[1]] = -1000 # don't pick myself
+                s[edge[0]] = -1000
+                s[edge[1]] = -1000
                 if len(subnode_indexs) < k:
                     top_k_neighbor_index = s.argsort()[-k:][::-1]
                     ii = 0
@@ -643,17 +491,11 @@ def generate_embedding(data, args):
 
 
 def EdgesToNodes(edges_embeddings, edges_snap, all_z, all_node_idx):
-    time0 = time.time()
     last_z = all_z[-1]
     nodeID_to_embedding = {}
     nodeID_to_embedding_num = {}
     z = last_z.detach()
     node_index = torch.unique(edges_snap)
-
-    last_z1 = all_z[-1].detach()
-    z1 = last_z1.clone()
-    node_index1 = torch.unique(edges_snap)
-
     for i, edge in enumerate(edges_snap):
         for ii in range(2):
             node_id = edge[ii].item()
@@ -677,32 +519,6 @@ def EdgesToNodes(edges_embeddings, edges_snap, all_z, all_node_idx):
 
     return all_z, all_node_idx
 
-def EdgesToNodes2(edges_embeddings, edges_snap, all_z, all_node_idx):
-    last_z = all_z[len(all_z) - 1]
-    nodeID_to_embedding = {}
-    nodeID_to_embedding_num = {}
-    z = last_z.detach()
-    node_index = torch.unique(edges_snap)
-
-    for i, edge in enumerate(edges_snap):
-        for ii in range(2):
-            node_id = edge[ii].item()
-            if node_id in nodeID_to_embedding:
-                nodeID_to_embedding[node_id] = nodeID_to_embedding[node_id] + edges_embeddings[i]
-                nodeID_to_embedding_num[node_id] = nodeID_to_embedding_num[node_id] + 1
-            else:
-                nodeID_to_embedding[node_id] = edges_embeddings[i]
-                nodeID_to_embedding_num[node_id] = 1
-
-    for i in node_index:
-        node_id = i.item()
-        if node_id in nodeID_to_embedding:
-            z[i] = nodeID_to_embedding[node_id] / nodeID_to_embedding_num[node_id]
-
-    all_z.append(z)
-    all_node_idx.append(node_index)
-
-    return all_z, all_node_idx
 
 def choose_node_type(id_type_map:dict, nodes):
     user_node = []
@@ -713,45 +529,6 @@ def choose_node_type(id_type_map:dict, nodes):
         elif id_type_map[node] == 1:
             item_node.append(node)
     return user_node, item_node
-
-def print_variable_name(var):
-    # 获取当前局部变量字典
-    frame = locals()
-    # 遍历局部变量字典，找到对应变量名
-    for name, value in frame.items():
-        if value is var:
-            return name
-
-
-def myPrint(time0, time1):
-    print(str(print_variable_name(time0))+'~'+str(print_variable_name(time1))+':'+str(time1 - time0)+'s')
-def get_n_params(model: nn.Module):
-    """
-    get parameter size of trainable parameters in model
-    :param model: model
-    :return: int
-    """
-    return sum(p.numel() for p in model.parameters())
-
-def temptest(outputs_edges, neighbours_edges):
-    nce = 0
-    for i, outputs_edge in enumerate(outputs_edges):
-        neighbours_snaps = neighbours_edges[i]
-        user_idx = torch.unique(torch.stack([neighbours_snaps[snap] for snap in range(len(neighbours_snaps))]))
-        position_dic = {user_idx[i].item(): i for i in range(user_idx.size(0))}
-        all_z = [torch.zeros((user_idx.size(0), outputs_edges.size(-1)))]
-        for ii, neighbours_snap in enumerate(neighbours_snaps):
-            z = all_z[-1].clone()
-            for iii in range(neighbours_snap.size(0)):
-                z[position_dic[neighbours_snap[iii].item()]] = outputs_edge[ii][iii]
-            all_z.append(z)
-        all_node_idx = neighbours_snaps
-        all_z = all_z[1:]
-
-        t_len = len(all_node_idx)
-        nce_loss = 0
-        f = lambda x: torch.exp(x)
-
 
 def calucate_emb(X_in_dim,M_dim,inner_dim,X,M):
 
@@ -790,25 +567,10 @@ def calucate_emb(X_in_dim,M_dim,inner_dim,X,M):
 
     return out_ebs, Result, zloss
 
-def memory_separateness_loss(X, sim, M):
-    # Find the nearest memory item (m_sp^p) and the second nearest (m_sp^n)
-    nearest_mem_idx = torch.argmax(sim, dim=1)
-    second_nearest_mem_idx = torch.topk(sim, 2, dim=1)[1][:, 1]
-
-    nearest_mem = M[nearest_mem_idx]
-    second_nearest_mem = M[second_nearest_mem_idx]
-
-    # Calculate the separateness loss
-    separateness_loss = torch.sum(torch.relu(torch.norm(X - nearest_mem, dim=1) - torch.norm(X - second_nearest_mem, dim=1)))
-
-    return separateness_loss
-
 def feature_compactness_loss(X, sim, M):
-    # Find the nearest memory item (m_sp^p)
     nearest_mem_idx = torch.argmax(sim, dim=1)
     nearest_mem = M[nearest_mem_idx]
 
-    # Calculate the compactness loss
     compactness_loss = torch.sum(torch.norm(X - nearest_mem, dim=1))
 
     return compactness_loss
@@ -828,20 +590,6 @@ def calucate_sim(X_in_dim,M_dim,inner_dim,X,M):
     sim = torch.sum(sim, dim=0).squeeze()
 
     return sim
-
-def process_hsg_edges(hsg_edges, outputs, type_edges):
-
-    for i in range(outputs.size(0)):
-        for ii in range(outputs.size(1)):
-            embeddings = outputs[i][ii]
-            type_nodes = type_edges[i][ii]
-
-            user_embeddings = embeddings[type_nodes == 0]
-            item_embeddings = embeddings[type_nodes == 1]
-
-            hsg_edges[i][ii].ndata['feat'] = {'user': user_embeddings.detach(), 'item': item_embeddings.detach()}
-
-    return hsg_edges
 
 def process_combined_hsg(hsg_combined):
     g = hsg_combined
@@ -1000,9 +748,7 @@ def prepare_hsg_snaps(args, hsg_snaps, hop_embeddings, type_embeddings):
     return mask_hsg_rs
 
 def prepare_combined_hsgs(args, hsg_snaps):
-    snap_size = args.snap_size
-    if args.onTest:
-        snap_size = snap_size * 0.1
+
     window_size = args.window_size
 
     combined_hsgs = []
@@ -1018,9 +764,7 @@ def prepare_combined_hsgs(args, hsg_snaps):
         item_offsets = []
         all_user_ids = []
         all_item_ids = []
-        time0 = time.time()
 
-        # Collect all embeddings, type nodes, hsg edges, and node IDs
         for i in range(len(hsg_edges)):
             for ii in range(window_size):
                 hsg = hsg_edges[i][ii]
@@ -1037,8 +781,6 @@ def prepare_combined_hsgs(args, hsg_snaps):
 
                 user_offset += hsg.num_nodes('user')
                 item_offset += hsg.num_nodes('item')
-        time1 = time.time()
-        print(f'Collect all embeddings, type nodes, hsg edges, and node IDs uses {time1 - time0}')
         all_user_ids = torch.cat(all_user_ids)
         all_item_ids = torch.cat(all_item_ids)
 
@@ -1061,8 +803,6 @@ def prepare_combined_hsgs(args, hsg_snaps):
 
         for key in combined_graph_data.keys():
             combined_graph_data[key] = (torch.cat(combined_graph_data[key][0]), torch.cat(combined_graph_data[key][1]))
-        time7 = time.time()
-        print(f'two for uses {time7 - time1}')
 
         combined_graph_data[('user', 'isolated', 'user')] = (all_user_ids, all_user_ids)
         combined_graph_data[('item', 'isolated', 'item')] = (all_item_ids, all_item_ids)
@@ -1080,14 +820,6 @@ def block_sampler(hsg, node_idx, ntype, device, sampler):
 
     return blocks
 
-def nowdt():
-    """
-    get string representation of date and time of now()
-    """
-    from datetime import datetime
-
-    now = datetime.now()
-    return now.strftime("%d/%m/%Y %H:%M:%S")
 
 
 

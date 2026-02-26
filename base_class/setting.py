@@ -1,11 +1,7 @@
 import abc
 
 class setting:
-    '''
-    SettingModule: Abstract Class
-    Entries: 
-    '''
-    
+
     setting_name = None
     setting_description = None
     

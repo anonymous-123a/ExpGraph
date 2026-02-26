@@ -7,171 +7,24 @@ import argparse
 import numpy as np
 import shutil
 
-def preprocessDataset(dataset):
-    print('Preprocess dataset: ' + dataset)
-    t0 = time.time()
-    if dataset in ['digg', 'uci']:
-        edges = np.loadtxt(
-            'data/raw/' +
-            dataset,
-            dtype=float,
-            comments='%',
-            delimiter=' ')
-        edges = edges[:, 0:2].astype(dtype=int)
-    elif dataset in ['btc_alpha', 'btc_otc']:
-        if dataset == 'btc_alpha':
-            file_name = 'data/raw/' + 'soc-sign-bitcoinalpha.csv'
-        elif dataset =='btc_otc':
-            file_name = 'data/raw/' + 'soc-sign-bitcoinotc.csv'
-        with open(file_name) as f:
-            lines = f.read().splitlines()
-        edges = [[float(r) for r in row.split(',')] for row in lines]
-        edges = np.array(edges)
-        edges = edges[edges[:, 3].argsort()]
-        edges = edges[:, 0:2].astype(dtype=int)
-
-
-    edges = edges[np.nonzero([x[0] != x[1] for x in edges])].tolist()
-    aa, idx = np.unique(edges, return_index=True, axis=0)
-    edges = np.array(edges)
-    edges = edges[np.sort(idx)]
-
-    vertexs, edges = np.unique(edges, return_inverse=True)
-    edges = np.reshape(edges, [-1, 2])
-    print('vertex:', len(vertexs), ' edge: ', len(edges))
-    if not os.path.exists('data/interim/'):
-        os.makedirs('data/interim/')
-    np.savetxt(
-        'data/interim/' +
-        dataset,
-        X=edges,
-        delimiter=' ',
-        comments='%',
-        fmt='%d')
-    print('Preprocess finished! Time: %.2f s' % (time.time() - t0))
-
-def complete_data(dataset, data,type):
-    if dataset == 'digg_all':
-        idx_anomaly_data = np.nonzero(data[:, 5] == 0)#np.nonzero(data[:, 5].squeeze() == 1)
-        if type == 'vote':
-            data[idx_anomaly_data, 4] = 0
-        elif type == 'trust':
-            data[idx_anomaly_data, 4] = np.random.randint(0, 2, size=len(idx_anomaly_data))
-            data[idx_anomaly_data, 2] = 1
-        for i in range(0, len(idx_anomaly_data[0])):#for i in range(1, len(idx_anomaly_data)):
-            if idx_anomaly_data[0][i] - 1 >= 0:
-                data[idx_anomaly_data[0][i], 3] = data[idx_anomaly_data[0][i] - 1, 3] + 1
-            else:
-                data[idx_anomaly_data[0][i], 3] = 0
-
-    return data
-
-
 
 def generateDataset(dataset, snap_size, args, train_per, anomaly_per, on_test=False):
     data_index = args.data_index
 
-    print('Generating data with anomaly for Dataset: ', dataset)
-    # if not os.path.exists('data/interim/' + dataset):
-    #     preprocessDataset(dataset)
-    data_path = os.path.join('data/interim/',f'{dataset}')
-    # if not os.path.exists(data_path):
-    #     os.makedirs(data_path)
-    #     preprocessDataset(dataset)
     if args.dataset == 'yelp':
-        if args.scalability_time :
-            data_all = np.loadtxt(
-                'data/interim/' + f'{dataset}/' +
-                dataset + '_' + str(data_index) + '_1_time' + '.csv',
-                dtype=int,
-                comments='%',
-                delimiter=' ')
-        elif args.scalability_node:
-            data_all = np.loadtxt(
-                'data/interim/' + f'{dataset}/' +
-                dataset + '_' + str(data_index) + '_1_node' + '.csv',
-                dtype=int,
-                comments='%',
-                delimiter=' ')
-        else:
-            data_all = np.loadtxt(
+        data_all = np.loadtxt(
                 'data/interim/' + f'{dataset}/' +
                 dataset + '_' + str(data_index) + '_1' + '.csv',
                 dtype=int,
                 comments='%',
                 delimiter=' ')
-    else:
-        data_all = np.loadtxt(
-            'data/interim/' + f'{dataset}/' +
-            dataset + '_' + str(data_index) + '.csv',
-            dtype=int,
-            comments='%',
-            delimiter=' ')
-
-    if args.scalability_time:
-        result_list = []
-        for i in range(args.scalability_num):
-            temp_data = data_all.copy()
-            temp_data[:, 3] += (i) * (np.max(data_all[:,3]) - np.min(data_all[:,3]))
-            if i > 0:
-                temp_data[:, 3] += 86400*(i)
-            result_list.append(temp_data)
-        data_all = np.vstack(result_list)
-        data_all = data_all[data_all[:, 3].argsort()]
-    elif args.scalability_node:
-        min_v = np.min(data_all[:, 1])
-        data_all[:, 1] = data_all[:, 1] - min_v
-        result_list = []
-        for i in range(args.scalability_num):
-            temp_data = data_all.copy()
-            temp_data[:, 0] += (i) * (np.max(data_all[:,0]) - np.min(data_all[:,0]))
-            if i > 0:
-                temp_data[:, 0] += 1*(i)
-            temp_data[:, 1] += (i) * (np.max(data_all[:, 1]) - np.min(data_all[:, 1]))
-            if i > 0:
-                temp_data[:, 1] += 1 * (i)
-            result_list.append(temp_data)
-        data_all = np.vstack(result_list)
-        data_all[:,1] += np.max(data_all[:,0]) + 1
-        data_all = data_all[data_all[:, 3].argsort()]
-
-
-
-
-    data_vote_idx = np.nonzero(data_all[:, 2] == 0)
-    data_xtrust_idx = np.nonzero(np.logical_or(data_all[:, 2] == 1, data_all[:, 2] == 2))
-    data_vote = data_all[data_vote_idx]
-    data_xtrust = data_all[data_xtrust_idx]
-
-    if on_test:
-        snap_size = int(snap_size * 0.1)
-        if args.dataset == 'digg_all':
-            num_sample_edges = int(np.size(data_all, axis=0)*0.1)
-            row_indices = np.arange(0, int(np.size(data_all, axis=0)))
-            sampled_indices = np.random.choice(row_indices, size=num_sample_edges, replace=False)
-            data_all = data_all[sampled_indices]
-            data_all = data_all[data_all[:, 3].argsort()]
-
-        elif args.dataset == 'amazon':
-            num_sample_edges = int(np.size(data_all, axis=0)*0.1)
-            row_indices = np.arange(0, int(np.size(data_all, axis=0)))
-            sampled_indices = np.random.choice(row_indices, size=num_sample_edges, replace=False)
-            data_all = data_all[sampled_indices]
-            data_all = data_all[data_all[:, 3].argsort()]
-        elif args.dataset == 'yelp':
-            num_sample_edges = int(np.size(data_all, axis=0) * 0.1)
-            row_indices = np.arange(0, int(np.size(data_all, axis=0)))
-            sampled_indices = np.random.choice(row_indices, size=num_sample_edges, replace=False)
-            data_all = data_all[sampled_indices]
-            data_all = data_all[data_all[:, 3].argsort()]
-
 
     edges = data_all[:, 0:2].astype(dtype=int)
     vertices = np.unique(edges)
     m = len(edges)
     n = len(vertices)
     idx = list(range(n))
-    id_index_map = {vertices[i]: i for i in idx}  # dictionary
+    id_index_map = {vertices[i]: i for i in idx}
     for i in range(m):
         data_all[i, 0] = id_index_map[data_all[i, 0]]
         data_all[i, 1] = id_index_map[data_all[i, 1]]
@@ -179,14 +32,13 @@ def generateDataset(dataset, snap_size, args, train_per, anomaly_per, on_test=Fa
     id_type_map = {}
     for edge in data_all[:, :3]:
         if edge[0] not in id_type_map:
-            id_type_map[edge[0]] = 0  # user
+            id_type_map[edge[0]] = 0
         if edge[1] not in id_type_map:
             if edge[2] == 0:
-                id_type_map[edge[1]] = 1  # item
+                id_type_map[edge[1]] = 1
             else:
                 id_type_map[edge[1]] = 0
 
-    t0 = time.time()
     if dataset == 'digg_all':
         idx_data_vote = np.nonzero(data_all[:, 2] == 0)
         idx_data_trust = np.nonzero(data_all[:, 2] == 1)
@@ -203,9 +55,9 @@ def generateDataset(dataset, snap_size, args, train_per, anomaly_per, on_test=Fa
         synthetic_train_v[:, 4] = 0
         synthetic_train_v[:, 1] = synthetic_train_v[:, 1] + min_item_number
         synthetic_test_v[:, 1] = synthetic_test_v[:, 1] + min_item_number
-        synthetic_test_v[:, 4] = 0      #rating 将vote的rating全置为0
+        synthetic_test_v[:, 4] = 0
         synthetic_test_u[:, 2] = 1
-        synthetic_train_u[:, 2] = 1     #trust
+        synthetic_train_u[:, 2] = 1
         synthetic_data = np.concatenate((synthetic_train_u, synthetic_train_v, synthetic_test_u, synthetic_test_v))
         synthetic_data = synthetic_data[synthetic_data[:, 3].argsort()]
         train_num = int(np.floor(train_per * np.size(synthetic_data, 0)))
@@ -243,9 +95,7 @@ def generateDataset(dataset, snap_size, args, train_per, anomaly_per, on_test=Fa
 
     elif args.dataset == 'amazon':
         idx_data_vote = np.nonzero(data_all[:, 2] == 0)
-        idx_data_trust = np.nonzero(data_all[:, 2] == 1)
         data_vote = data_all[idx_data_vote]
-        data_trust = data_all[idx_data_trust]
         min_item_number = np.min(data_vote[:, 1])
         data_vote[:, 1] = data_vote[:, 1] - min_item_number
 
@@ -255,17 +105,12 @@ def generateDataset(dataset, snap_size, args, train_per, anomaly_per, on_test=Fa
                                                                   max_idx1=np.max(data_vote[:, 0]),
                                                                   max_idx2=np.max(data_vote[:, 1]),
                                                                   datasetname='amazon')
-        # synthetic_train_u, synthetic_test_u = anomaly_generation3(0, anomaly_per, data=data_trust,
-        #                                                           m=np.size(data_trust, 0),
-        #                                                           max_idx1=np.max(data_trust[:, 0]),
-        #                                                           max_idx2=np.max(data_trust[:, 1]))
+
         synthetic_train_v[:, 4] = 0
         synthetic_train_v[:, 1] = synthetic_train_v[:, 1] + min_item_number
         synthetic_test_v[:, 1] = synthetic_test_v[:, 1] + min_item_number
-        synthetic_test_v[:, 4] = 0  # rating 将vote的rating全置为0
-        # synthetic_test_u[:, 2] = 1
-        # synthetic_train_u[:, 2] = 1  # trust
-        # synthetic_data = np.concatenate((synthetic_train_u, synthetic_train_v, synthetic_test_u, synthetic_test_v))
+        synthetic_test_v[:, 4] = 0
+
         synthetic_data = np.concatenate((synthetic_train_v, synthetic_test_v))
         synthetic_data = synthetic_data[synthetic_data[:, 3].argsort()]
         train_num = int(np.floor(train_per * np.size(synthetic_data, 0)))
@@ -290,10 +135,7 @@ def generateDataset(dataset, snap_size, args, train_per, anomaly_per, on_test=Fa
             syn_data = synthetic_data
     elif args.dataset == 'yelp':
         idx_data_vote = np.nonzero(data_all[:, 2] == 0)
-        idx_data_trust = np.nonzero(data_all[:, 2] == 1)
         data_vote = data_all[idx_data_vote]
-        data_trust = data_all[idx_data_trust]
-        min_item_number = np.min(data_vote[:, 1])
 
         data_vote[:, 5] = np.where(data_vote[:, 5] == 1, 1, 0)
         synthetic_data = data_vote[data_vote[:, 3].argsort()]
@@ -328,13 +170,8 @@ def generateDataset(dataset, snap_size, args, train_per, anomaly_per, on_test=Fa
 
     train_mat = csr_matrix((np.ones([np.size(syn_train, 0)], dtype=np.int32), (syn_train[:, 0], syn_train[:, 1])),
                            shape=(n, n))
-    # sparse(train(:,1), train(:,2), ones(length(train), 1), n, n) #TODO: node addition
+
     train_mat = train_mat + train_mat.transpose()
-
-
-    print("Anomaly Generation finish! Time: %.2f s"%(time.time()-t0))
-    t0 = time.time()
-
 
     train_mat = (train_mat + train_mat.transpose() + sparse.eye(n)).tolil()
     headtail = train_mat.rows
@@ -344,8 +181,7 @@ def generateDataset(dataset, snap_size, args, train_per, anomaly_per, on_test=Fa
 
     train_size = int(len(syn_train) / snap_size + 0.5)
     test_size = int(len(syn_test) / snap_size + 0.5)
-    print("Train size:%d  %d  Test size:%d %d" %
-          (len(syn_train), train_size, len(syn_test), test_size))
+
     rows = []
     cols = []
     typs = []
@@ -367,8 +203,6 @@ def generateDataset(dataset, snap_size, args, train_per, anomaly_per, on_test=Fa
         weis.append(wei)
         labs.append(lab)
 
-    print("Training dataset contruction finish! Time: %.2f s" % (time.time()-t0))
-    t0 = time.time()
 
     for i in range(test_size):
         start_loc = i * snap_size
@@ -379,14 +213,12 @@ def generateDataset(dataset, snap_size, args, train_per, anomaly_per, on_test=Fa
         typ = np.array(syn_test[start_loc:end_loc, 2], dtype=np.int32)
         lab = np.array(syn_test[start_loc:end_loc, -1], dtype=np.int32)
         wei = np.ones_like(row, dtype=np.int32)
-        print("1")
         rows.append(row)
         cols.append(col)
         typs.append(typ)
         weis.append(wei)
         labs.append(lab)
 
-    print("Test dataset finish constructing! Time: %.2f s" % (time.time()-t0))
     path_ = os.path.join('data/percent', f'{dataset}')
     if not os.path.exists(path_):
         os.makedirs(path_)
@@ -406,7 +238,7 @@ if __name__ == '__main__':
     parser.add_argument('--train_ratio', type=float, default=0.7)
     parser.add_argument('--data_index', type=int, default=0)
     args = parser.parse_args()
-    np.random.seed(2020)
+
 
     snap_size_dict = {'uci':1000, 'digg_all':200, 'btc_alpha':1000, 'btc_otc':2000}
 
@@ -415,7 +247,5 @@ if __name__ == '__main__':
     else:
         anomaly_pers = [args.anomaly_per]
 
-    # for anomaly_per in anomaly_pers:
-    #     generateDataset(args.dataset, snap_size_dict[args.dataset], train_per=args.train_per, anomaly_per=anomaly_per)
+
     generateDataset(args.dataset, snap_size_dict[args.dataset], args, train_per=args.train_ratio, anomaly_per=0.10, on_test=True)
-    print("0_prepare_data has done")

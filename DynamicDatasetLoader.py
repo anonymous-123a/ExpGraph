@@ -27,18 +27,15 @@ class DynamicDataset_loader(dataset):
         self.train_per = args.train_ratio
         self.anomaly_per = args.anomaly_ratio
 
-    def load_hop_wl_batch(self):  #load the "raw" WL/Hop/Batch dict
-        print('Load WL Dictionary')
+    def load_hop_wl_batch(self):
         f = open('./result/WL/' + self.dataset_name, 'rb')
         wl_dict = pickle.load(f)
         f.close()
 
-        print('Load Hop Distance Dictionary')
         f = open('./result/Hop/hop_' + self.dataset_name + '_' + str(self.k) + '_' + str(self.window_size), 'rb')
         hop_dict = pickle.load(f)
         f.close()
 
-        print('Load Subgraph Batches')
         f = open('./result/Batch/' + self.dataset_name + '_' + str(self.k) + '_' + str(self.window_size), 'rb')
         batch_dict = pickle.load(f)
         f.close()
@@ -46,7 +43,6 @@ class DynamicDataset_loader(dataset):
         return hop_dict, wl_dict, batch_dict
 
     def normalize(self, mx):
-        """Row-normalize sparse matrix"""
         rowsum = np.array(mx.sum(1))
         r_inv = np.power(rowsum, -1).flatten()
         r_inv[np.isinf(r_inv)] = 0.
@@ -55,7 +51,6 @@ class DynamicDataset_loader(dataset):
         return mx
 
     def normalize_adj(self, adj):
-        """Symmetrically normalize adjacency matrix. (0226)"""
         adj = sp.coo_matrix(adj)
         rowsum = np.array(adj.sum(1))
         d_inv_sqrt = np.power(rowsum, -0.5).flatten()
@@ -64,7 +59,6 @@ class DynamicDataset_loader(dataset):
         return adj.dot(d_mat_inv_sqrt).transpose().dot(d_mat_inv_sqrt).tocoo()
 
     def adj_normalize(self, mx):
-        """normalize sparse matrix"""
         rowsum = np.array(mx.sum(1))
         r_inv = np.power(rowsum, -0.5).flatten()
         r_inv[np.isinf(r_inv)] = 0.
@@ -79,7 +73,6 @@ class DynamicDataset_loader(dataset):
         return correct / len(labels)
 
     def sparse_mx_to_torch_sparse_tensor(self, sparse_mx):
-        """Convert a scipy sparse matrix to a torch sparse tensor."""
         sparse_mx = sparse_mx.tocoo().astype(np.float32)
         indices = torch.from_numpy(
             np.vstack((sparse_mx.row, sparse_mx.col)).astype(np.int64))
@@ -96,8 +89,6 @@ class DynamicDataset_loader(dataset):
         return labels_onehot
 
     def sparse_to_tuple(self, sparse_mx):
-        """Convert sparse matrix to tuple representation. (0226)"""
-
         def to_tuple(mx):
             if not sp.isspmatrix_coo(mx):
                 mx = mx.tocoo()
@@ -115,9 +106,7 @@ class DynamicDataset_loader(dataset):
         return sparse_mx
 
     def preprocess_adj(self, adj):
-        """Preprocessing of adjacency matrix for simple GCN model and conversion to tuple representation. (0226)"""
         adj = adj + adj.T.multiply(adj.T > adj) - adj.multiply(adj.T > adj)
-        # adj_np = np.array(adj.todense())
         adj_normalized = self.normalize_adj(adj + sp.eye(adj.shape[0]))
         adj_normalized = self.sparse_mx_to_torch_sparse_tensor(adj_normalized)
         return adj_normalized
@@ -128,10 +117,8 @@ class DynamicDataset_loader(dataset):
         eigen_file_name = 'data/eigen/' + f'{self.dataset_name}/'+ self.dataset_name + '_' + str(self.index) + '_' + str(self.train_per) + '_' + str(self.anomaly_per) + '.pkl'
         if not os.path.exists(eigen_file_name):
             generate_eigen = True
-            print('Generating eigen as: ' + eigen_file_name)
         else:
             generate_eigen = False
-            print('Loading eigen from: ' + eigen_file_name)
             with open(eigen_file_name, 'rb') as f:
                 eigen_adjs_sparse = pickle.load(f)
             eigen_adjs = []
@@ -166,9 +153,7 @@ class DynamicDataset_loader(dataset):
         return adjs, eigen_adjs
 
     def load(self):
-        """Load dynamic network dataset"""
 
-        print('Loading {} dataset...'.format(self.dataset_name))
         with open('data/percent/' + f'{self.dataset_name}/' + self.dataset_name + '_' + f'{self.index}' + '_' + str(self.train_per) + '_' + str(self.anomaly_per) + '.pkl', 'rb') as f:
             rows, cols, typs, labels, weights, headtail, id_type_map, train_size, test_size, nb_nodes, nb_edges = pickle.load(f)
 

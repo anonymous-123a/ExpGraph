@@ -63,61 +63,6 @@ class MyConfig(PretrainedConfig):
         self.node_type_num = node_type_num
         self.snaps_num = snaps_num
 
-
-class Contrastive(nn.Module):
-    def __init__(self, device, args):
-        super(Contrastive, self).__init__()
-        self.device = device
-        self.max_dis = args.contrastive_window_size
-        self.start_window = args.window_size - 1
-        # z_dim = args.hidden_size_HANLayer * args.num_heads_HANLayer
-        z_dim = args.embedding_dim
-        self.linear = nn.Linear(z_dim, z_dim)
-
-    def forward(self, outputs_edges, neighbours_edges):
-        nce = 0
-        for i, outputs_edge in enumerate(outputs_edges):
-            neighbours_snaps = neighbours_edges[i]
-            user_idx = torch.unique(torch.stack([neighbours_snaps[snap] for snap in range(len(neighbours_snaps))]))
-            position_dic = {user_idx[i].item(): i for i in range(user_idx.size(0))}
-            all_z = [torch.zeros((user_idx.size(0), outputs_edges.size(-1))).to(outputs_edges.device)]
-            for ii, neighbours_snap in enumerate(neighbours_snaps):
-                z = all_z[-1].clone()
-                for iii in range(neighbours_snap.size(0)):
-                    z[position_dic[neighbours_snap[iii].item()]] = outputs_edge[ii][iii].clone()
-                all_z.append(z)
-            all_node_idx = neighbours_snaps
-            all_z = all_z[1:]
-
-            t_len = len(all_node_idx)
-            nce_loss = 0
-            f = lambda x: torch.exp(x)
-            # self.neg_sample = last_h
-            for i in range(t_len - self.max_dis):
-                for j in range(i + 1, i + self.max_dis + 1):
-                    nodes_1, nodes_2 = all_node_idx[i].tolist(), all_node_idx[j].tolist()
-                    common_nodes = list(set(nodes_1) & set(nodes_2))
-                    common_nodes = [position_dic[node] for node in common_nodes]
-                    z_anchor = all_z[i][common_nodes]
-                    z_anchor = self.linear(z_anchor)
-                    positive_samples = all_z[j][common_nodes]
-                    pos_sim = f(self.sim(z_anchor, positive_samples, True))
-                    neg_sim = f(self.sim(z_anchor, all_z[j], False))
-                    # index = torch.LongTensor(common_nodes).unsqueeze(1).to(self.device)
-                    neg_sim = neg_sim.sum(dim=-1).unsqueeze(1)  # - torch.gather(neg_sim, 1, index)
-                    nce_loss += -torch.log(pos_sim / (neg_sim)).mean()
-                    # nce_loss += -(torch.log(pos_sim / (pos_sim + neg_sim.sum(dim=-1) - torch.gather(neg_sim, 1, index)))).mean()
-            nce = nce + nce_loss / (self.max_dis * (t_len - self.max_dis))
-        return nce
-
-    def sim(self, h1, h2, pos=False):
-        z1 = F.normalize(h1, dim=-1, p=2)
-        z2 = F.normalize(h2, dim=-1, p=2)
-        if pos == True:
-            return torch.einsum('ik, ik -> i', z1, z2).unsqueeze(1)
-        else:
-            return torch.mm(z1, z2.t())
-
 class Contrastive2(nn.Module):
     def __init__(self, device, args):
         super(Contrastive2, self).__init__()
@@ -143,8 +88,7 @@ class Contrastive2(nn.Module):
             positive_samples = all_z[pre_s][common_nodes]
             pos_sim = f(self.sim(z_anchor, positive_samples, True))
             neg_sim = f(self.sim(z_anchor, all_z[pre_s], False))
-            # index = torch.LongTensor(common_nodes).unsqueeze(1).to(self.device)
-            neg_sim = neg_sim.sum(dim=-1).unsqueeze(1)  # - torch.gather(neg_sim, 1, index)
+            neg_sim = neg_sim.sum(dim=-1).unsqueeze(1)
             nce_loss += -torch.log(pos_sim / (neg_sim)).mean()
 
         return nce_loss / (s - self.start_window)
@@ -186,9 +130,6 @@ class EarlyStopping:
             self.counter = 0
 
     def save_checkpoint(self, val_auc, model):
-        '''Saves model when validation AUC increase.'''
-        if self.verbose:
-            print(f'Validation AUC increased ({self.val_auc_max:.6f} --> {val_auc:.6f}).  Saving model ...')
         torch.save(model.state_dict(), self.args.checkpoints_path)
         self.val_auc_max = val_auc
 
@@ -238,7 +179,7 @@ class NodeEncodeModel(BertPreTrainedModel):
 
 
 
-class NodeEncoding(nn.Module):  # EdgeEncoding
+class NodeEncoding(nn.Module):
     def __init__(self, config):
         super(NodeEncoding, self).__init__()
         self.config = config
@@ -257,19 +198,16 @@ class NodeEncoding(nn.Module):  # EdgeEncoding
         time_embeddings = self.time_dis_embeddings(time_dis_ids)
         type_embeddings = self.type_dis_embeddings(type_dis_ids)
 
-        # Layer normalization and dropout
         position_embeddings = self.dropout(self.LayerNorm(position_embeddings))
         hop_embeddings = self.dropout(self.LayerNorm(hop_embeddings))
         time_embeddings = self.dropout(self.LayerNorm(time_embeddings))
         type_embeddings = self.dropout(self.LayerNorm(type_embeddings))
 
-        # Concatenate embeddings along the last dimension
         embeddings = torch.cat((position_embeddings, hop_embeddings, time_embeddings, type_embeddings), dim=-1).contiguous()
 
 
-        # Reshape the concatenated embeddings
         embeddings = embeddings.view(
-            position_embeddings.size(0), position_embeddings.size(1), position_embeddings.size(2), 4, position_embeddings.size(3)#
+            position_embeddings.size(0), position_embeddings.size(1), position_embeddings.size(2), 4, position_embeddings.size(3)
         )
 
         return embeddings
@@ -357,39 +295,15 @@ class SemanticAttention(nn.Module):
         )
 
     def forward(self, z):
-        w = self.project(z)  # (N, M, 1)
-        beta = torch.softmax(w.squeeze(-1), dim=1)  # (N, M)
-        return (beta.unsqueeze(-1) * z).sum(dim=1)  # (N, D)
+        w = self.project(z)
+        beta = torch.softmax(w.squeeze(-1), dim=1)
+        return (beta.unsqueeze(-1) * z).sum(dim=1)
 
 class HANLayer(nn.Module):
-    """
-    HAN layer.
-
-    Arguments
-    ---------
-    meta_paths : list of metapaths, each as a list of edge types
-    in_size : input feature dimension
-    out_size : output feature dimension
-    layer_num_heads : number of attention heads
-    dropout : Dropout probability
-
-    Inputs
-    ------
-    g : DGLGraph
-        The heterogeneous graph
-    h : tensor
-        Input features
-
-    Outputs
-    -------
-    tensor
-        The output feature
-    """
-
     def __init__(self, meta_paths, in_size, out_size, layer_num_heads, dropout):
         super(HANLayer, self).__init__()
 
-        # One GAT layer for each meta path based adjacency matrix
+
         self.gat_layers = nn.ModuleList()
         for i in range(len(meta_paths)):
             self.gat_layers.append(
@@ -426,66 +340,12 @@ class HANLayer(nn.Module):
             new_g = self._cached_coalesced_graph[meta_path]
             semantic_embeddings.append(self.gat_layers[i](new_g, h).flatten(1))
 
-        # Ensure the tensors are contiguous before stacking
         semantic_embeddings = [emb.contiguous() for emb in semantic_embeddings]
         semantic_embeddings = torch.stack(
             semantic_embeddings, dim=1
-        )  # (N, M, D * K)
+        )
 
-        return self.semantic_attention(semantic_embeddings)  # (N, D * K)
-
-class GraphEncodeModel_HAN(nn.Module):
-    def __init__(self, args, config):
-        super().__init__()
-        self.args = args
-        self.config = config
-        self.HANLayer_user = HANLayer([['votes', 're-votes'], ['trusts', 're-trusts']],
-                                      in_size=args.embedding_dim, out_size=args.hidden_size_HANLayer,
-                                      layer_num_heads=args.num_heads_HANLayer, dropout=args.dropout_HANLayer)
-        self.HANLayer_item = HANLayer([['re-votes', 'votes']],
-                                      in_size=args.embedding_dim, out_size=args.hidden_size_HANLayer,
-                                      layer_num_heads=args.num_heads_HANLayer, dropout=args.dropout_HANLayer)
-        self.snapAttention = SemanticAttention(in_size=args.hidden_size_HANLayer * args.num_heads_HANLayer)
-
-    def forward(self, outputs, neighbours_edges, hsg_edges, id_type_map, type_edges):
-        edges_embeddings = []
-
-        for i in range(outputs.size(0)):
-            snaps_embeddings = []
-            for ii in range(outputs.size(1)):
-                embeddings = outputs[i][ii]
-                type_nodes = type_edges[i][ii]
-                hsg = hsg_edges[i][ii]
-
-                user_embeddings = embeddings[type_nodes == 0]
-                item_embeddings = embeddings[type_nodes == 1]
-                hsg.ndata['feat'] = {'user': user_embeddings.detach(), 'item': item_embeddings.detach()}
-
-                # Process embeddings based on their presence
-                if item_embeddings.size(0) > 0:
-                    item_embeddings = self.HANLayer_item(hsg, item_embeddings)
-                if user_embeddings.size(0) > 0:
-                    user_embeddings = self.HANLayer_user(hsg, user_embeddings)
-
-                if user_embeddings.size(0) > 0 and item_embeddings.size(0) > 0:
-                    combined_embeddings = torch.cat((user_embeddings, item_embeddings), dim=0)
-                elif user_embeddings.size(0) > 0:
-                    combined_embeddings = user_embeddings
-                elif item_embeddings.size(0) > 0:
-                    combined_embeddings = item_embeddings
-                else:
-                    combined_embeddings = torch.tensor([], device=embeddings.device)
-
-                if combined_embeddings.numel() > 0:
-                    snap_embedding = torch.mean(combined_embeddings, dim=0)
-                    snaps_embeddings.append(snap_embedding)
-
-            if snaps_embeddings:
-                snaps_tensor = torch.stack(snaps_embeddings).to(self.args.device)
-                edge_embedding = self.snapAttention(snaps_tensor.unsqueeze(0)).squeeze()
-                edges_embeddings.append(edge_embedding)
-
-        return torch.stack(edges_embeddings) if edges_embeddings else torch.tensor([]), hsg_edges
+        return self.semantic_attention(semantic_embeddings)
 
 class GraphEncodeModel_HAN2(nn.Module):
     def __init__(self, args, config):
@@ -514,28 +374,23 @@ class GraphEncodeModel_HAN2(nn.Module):
         self.snapAttention = SemanticAttention(in_size=args.hidden_size_HANLayer * args.num_heads_HANLayer)
 
     def forward(self, outputs, type_edges, combined_graph_data, hop_embedding):
-        edges_embeddings = []
         all_embeddings = outputs.view(-1, self.args.embedding_dim)
-        all_type_nodes = type_edges.view(-1, )  #
+        all_type_nodes = type_edges.view(-1, )
         user_embeddings = all_embeddings[all_type_nodes == 0]
         item_embeddings = all_embeddings[all_type_nodes == 1]
         condition = hop_embedding.view(-1, self.args.neighbour_num + 2) != 99
         ones = torch.ones(condition.shape, device=self.args.device)
         zeros = torch.zeros(condition.shape, device=self.args.device)
-        gl_embedding = torch.where(condition, ones, zeros)
 
         hsg_combined = dgl.heterograph(combined_graph_data)
         hsg_combined.nodes['user'].data['feat'] = user_embeddings
         hsg_combined.nodes['item'].data['feat'] = item_embeddings
 
-        time2 = time.time()
         hsg_combined_s = process_combined_hsg(hsg_combined).to(self.args.device)
-        time3 = time.time()
         if item_embeddings.size(0) > 0:
             item_embeddings = self.HANLayer_item(hsg_combined, item_embeddings)
         if user_embeddings.size(0) > 0:
             user_embeddings = self.HANLayer_user(hsg_combined, user_embeddings)
-        time4 = time.time()
 
 
 
@@ -544,20 +399,13 @@ class GraphEncodeModel_HAN2(nn.Module):
         restored_embeddings[all_type_nodes == 0] = user_embeddings
         restored_embeddings[all_type_nodes == 1] = item_embeddings
 
-        time6 = time.time()
-
-        edges_embeddings1 = []
-        global_start_idx = 0
         node_count = self.args.neighbour_num + 2
 
         num_snapshots = outputs.size(0) * outputs.size(1)
         snapshot_indices = torch.arange(num_snapshots) * node_count
         end_indices = snapshot_indices + node_count
 
-        # Create a tensor of start and end indices for all snapshots
         indices = torch.stack([snapshot_indices, end_indices], dim=1)
-
-
 
         snaps_embeddings1 = torch.stack([
             torch.mean(restored_embeddings[indices[i, 0]:indices[i, 1]], dim=0)
@@ -567,122 +415,7 @@ class GraphEncodeModel_HAN2(nn.Module):
         snaps_tensor1 = snaps_embeddings1.view(outputs.size(0), self.args.window_size, -1)
         edge_embedding1 = self.snapAttention(snaps_tensor1).squeeze()
 
-
-        time7 = time.time()
-
         return edge_embedding1 if edge_embedding1.numel != 0 else torch.tensor([]), hsg_combined_s
-
-
-
-
-
-class GraphEncodeModel_Linear(nn.Module):
-    def __init__(self, args, config):
-        super().__init__()
-        self.args = args
-        self.config = config
-        self.HANLayer_user = nn.Linear(args.embedding_dim, args.hidden_size_HANLayer * args.num_heads_HANLayer)
-        self.HANLayer_item = nn.Linear(args.embedding_dim, args.hidden_size_HANLayer * args.num_heads_HANLayer)
-        self.snapAttention = SemanticAttention(in_size=args.hidden_size_HANLayer * args.num_heads_HANLayer)
-
-    def forward(self, outputs, neighbours_edges, hsg_edges, id_type_map, type_edges):
-        edges_embeddings = []
-
-        # Handle data and indexing correctly
-        for edge_idx in range(outputs.size(0)):
-            snap_embeddings = []
-
-            for snap_idx in range(outputs.size(1)):
-                embeddings = outputs[edge_idx, snap_idx]
-                type_nodes = type_edges[edge_idx, snap_idx]
-
-                user_embeddings = embeddings[type_nodes == 0]
-                item_embeddings = embeddings[type_nodes == 1]
-
-                # Use detach when assigning to hsg to prevent gradient tracking
-                hsg = hsg_edges[edge_idx][snap_idx]
-                hsg.ndata['feat'] = {'user': user_embeddings.detach(), 'item': item_embeddings.detach()}
-
-                user_embedding_processed = self.HANLayer_user(user_embeddings) if user_embeddings.numel() > 0 else None
-                item_embedding_processed = self.HANLayer_item(item_embeddings) if item_embeddings.numel() > 0 else None
-
-                combined_embeddings = []
-                if user_embedding_processed is not None:
-                    combined_embeddings.append(user_embedding_processed)
-                if item_embedding_processed is not None:
-                    combined_embeddings.append(item_embedding_processed)
-
-                if combined_embeddings:
-                    combined_embeddings = torch.cat(combined_embeddings, dim=0)
-                    snap_embedding = torch.mean(combined_embeddings, dim=0)
-                    snap_embeddings.append(snap_embedding)
-
-            if snap_embeddings:
-                snaps_tensor = torch.stack(snap_embeddings).to(self.args.device)
-                edge_embedding = self.snapAttention(torch.unsqueeze(snaps_tensor, dim=0)).squeeze()
-                edges_embeddings.append(edge_embedding)
-
-        return torch.stack(edges_embeddings) if edges_embeddings else torch.tensor([]), hsg_edges
-
-
-
-
-class RelationalSubgraphEncoder(nn.Module):
-    def __init__(self, args):
-        super(RelationalSubgraphEncoder, self).__init__()
-        self.args = args
-        self.graph = dgl.heterograph({
-            ('user', 'votes', 'item'): ([], []),
-            ('item', 're-votes', 'user'): ([], []),
-            ('user', 'trusts', 'user'): ([], []),
-            ('user', 're-trusts', 'user'): ([], [])
-        })
-
-        self.relational_encoding = RelationalNodeEncoding(args=args, graph=self.graph)
-        self.lstm = nn.ModuleDict({
-            str(et): nn.GRU(args.hidden_units_rh * args.num_heads_rh, args.hidden_dim_GRU, batch_first=True).to(self.args.device)
-            for et in self.graph.canonical_etypes
-        })
-
-    def forward(self, hsg_edges, edges_snap, combined_hsg, mask_hsg_rs):
-        R_graph_embeddings_edges = []
-
-        # temp = self.relational_encoding(combined_hsg)
-        temp_node_num = {
-            ('user', 'votes', 'item'): 0,
-            ('item', 're-votes', 'user'): 0,
-            ('user', 'trusts', 'user'): 0,
-            ('user', 're-trusts', 'user'): 0
-        }
-
-        for i, edge_list in enumerate(hsg_edges):
-            R_grap_embeddings_snaps = []
-            R_grap_embeddings_edge = {}
-
-            for ii, edge in enumerate(edge_list):
-                time1 = time.time()
-                R_grap_embeddings_snap, temp_user_encoding, temp_item_encoding = self.relational_encoding(edge)
-                for key in temp_user_encoding.keys():
-                    temp_node_num[key] = temp_node_num[key] + temp_user_encoding[key].size(0)
-                for key in temp_item_encoding.keys():
-                    temp_node_num[key] = temp_node_num[key] + temp_item_encoding[key].size(0)
-                time2 = time.time()
-                R_grap_embeddings_snaps.append(R_grap_embeddings_snap)
-
-            for key, value in R_grap_embeddings_snaps[0].items():
-                R_grap_embeddings_edge[key] = [value]
-
-            for R_grap_embeddings_snap in R_grap_embeddings_snaps[1:]:
-                for key in R_grap_embeddings_edge.keys():
-                    R_grap_embeddings_edge[key].append(R_grap_embeddings_snap.get(key, torch.zeros_like(R_grap_embeddings_edge[key][0])))
-
-            for key in R_grap_embeddings_edge.keys():
-                Rsubgraph_change = torch.stack(R_grap_embeddings_edge[key][::-1]).to(self.args.device)
-                _, R_grap_embeddings_edge[key] = self.lstm[str(key)](Rsubgraph_change)
-
-            R_graph_embeddings_edges.append(R_grap_embeddings_edge)
-
-        return R_graph_embeddings_edges
 
 class RelationalSubgraphEncoder2(nn.Module):
     def __init__(self, args):
@@ -728,12 +461,9 @@ class RelationalSubgraphEncoder2(nn.Module):
         mask = mask_hsg_rs['mask']
         offsets = mask_hsg_rs['offsets']
         idx_num_all = mask_hsg_rs['idx_num_all']
-        mask4node = mask_hsg_rs['mask4node']
 
         node_mask = {'user': user_mask, 'item': item_mask }
-        time0 = time.time()
         node_embeddings_all = self.relational_encoding(hsg=combined_hsg, node_masks=node_mask)
-        time1 = time.time()
 
         R_graph_embeddings_edges = []
         for i in range(hsg_edges_size0):
@@ -782,66 +512,6 @@ class RelationalSubgraphEncoder2(nn.Module):
 
         return blocks
 
-
-class RelationalNodeEncoding(nn.Module):
-    def __init__(self, args, graph):
-        super(RelationalNodeEncoding, self).__init__()
-
-        self.args = args
-        self.graph = graph
-        self.r_hgnn = R_HGNN(graph,
-                             input_dim_dict={ntype: args.embedding_dim for ntype in graph.ntypes},
-                             hidden_dim=args.hidden_units_rh, relation_input_dim=args.relation_hidden_units_rh,
-                             relation_hidden_dim=args.relation_hidden_units_rh,
-                             num_layers=args.n_layers_rh, n_heads=args.num_heads_rh, dropout=args.dropout_rh,
-                             residual=args.residual_rh
-                             )
-        self.sample_nodes_num = [{etype: -1 for etype in graph.canonical_etypes} for _ in range(args.n_layers_rh)]
-        self.sampler = dgl.dataloading.MultiLayerNeighborSampler(self.sample_nodes_num)
-
-    def forward(self, hsg: dgl.DGLHeteroGraph):
-        device = self.args.device
-        user_idx = hsg.nodes('user').to(device)
-        item_idx = hsg.nodes('item').to(device)
-        time1 = time.time()
-        nodes_representation_user = self._encode_nodes(hsg, user_idx, 'user', device)
-        nodes_representation_item = self._encode_nodes(hsg, item_idx, 'item', device)
-        time2 = time.time()
-        # print('_encode_nodes time:{}'.format(time2-time1))  #0.061998605728149414
-        nodes_representation_user_ = {}
-        nodes_representation_item_ = {}
-        time3 = time.time()
-        for key, value in nodes_representation_user.items():
-            nodes_representation_user_[key] = nodes_representation_user[key].clone()
-            nodes_representation_user[key] = torch.mean(value, dim=0).squeeze()
-
-
-        for key, value in nodes_representation_item.items():
-            nodes_representation_item_[key] = nodes_representation_item[key].clone()
-            nodes_representation_item[key] = torch.mean(value, dim=0).squeeze()
-
-        nodes_representation = nodes_representation_user
-        nodes_representation.update(nodes_representation_item)
-        time4 = time.time()
-        # print('nodes_representation time:{}'.format(time4-time3))#0.0003674030303955078
-        return nodes_representation, nodes_representation_user_, nodes_representation_item_
-
-    def _encode_nodes(self, hsg, node_idx, ntype, device):
-        if node_idx.size(0) == 0:
-            return {}
-
-        loader = dgl.dataloading.DataLoader(hsg, {ntype: node_idx}, self.sampler, batch_size=node_idx.size(0),
-                                            drop_last=False, device=device)
-        nodes_representation = {}
-
-        for i, (input_nodes, output_nodes, blocks) in enumerate(loader):
-            blocks = [block.to(device) for block in blocks]
-            input_features = {(stype, etype, dtype): blocks[0].srcnodes[dtype].data['feat'] for stype, etype, dtype in
-                              blocks[0].canonical_etypes}
-            nodes_representation = self.r_hgnn(blocks, copy.deepcopy(input_features))
-
-        return nodes_representation
-
 class RelationalNodeEncoding2(nn.Module):
     def __init__(self, args, graph):
         super(RelationalNodeEncoding2, self).__init__()
@@ -862,7 +532,6 @@ class RelationalNodeEncoding2(nn.Module):
         device = self.args.device
         user_idx = hsg.nodes('user').to(device)
         item_idx = hsg.nodes('item').to(device)
-        time1 = time.time()
         if node_masks is not None:
             nodes_representation_user = self._encode_nodes(hsg, user_idx, 'user', device, masks=node_masks['user'])
             nodes_representation_item = self._encode_nodes(hsg, item_idx, 'item', device, masks=node_masks['item'])
@@ -872,7 +541,6 @@ class RelationalNodeEncoding2(nn.Module):
 
         nodes_representation = nodes_representation_user
         nodes_representation.update(nodes_representation_item)
-        time4 = time.time()
         return nodes_representation
 
     def _encode_nodes(self, hsg, node_idx, ntype, device, masks=None):
@@ -899,20 +567,7 @@ class R_HGNN(nn.Module):
     def __init__(self, graph: dgl.DGLHeteroGraph, input_dim_dict: dict, hidden_dim: int, relation_input_dim: int,
                  relation_hidden_dim: int, num_layers: int, n_heads: int = 4,
                  dropout: float = 0.2, negative_slope: float = 0.2, residual: bool = True, norm: bool = False):
-        """
 
-        :param graph: a heterogeneous graph
-        :param input_dim_dict: node input dimension dictionary
-        :param hidden_dim: int, node hidden dimension
-        :param relation_input_dim: int, relation input dimension
-        :param relation_hidden_dim: int, relation hidden dimension
-        :param num_layers: int, number of stacked layers
-        :param n_heads: int, number of attention heads
-        :param dropout: float, dropout rate
-        :param negative_slope: float, negative slope
-        :param residual: boolean, residual connections or not
-        :param norm: boolean, layer normalization or not
-        """
         super(R_HGNN, self).__init__()
 
         self.input_dim_dict = input_dim_dict
@@ -926,20 +581,16 @@ class R_HGNN(nn.Module):
         self.residual = residual
         self.norm = norm
 
-        # relation embedding dictionary
         self.relation_embedding = nn.ParameterDict({
             etype: nn.Parameter(torch.randn(relation_input_dim, 1)) for etype in graph.etypes
         })
 
-        # align the dimension of different types of nodes
         self.projection_layer = nn.ModuleDict({
             ntype: nn.Linear(input_dim_dict[ntype], hidden_dim * n_heads) for ntype in input_dim_dict
         })
 
-        # each layer takes in the heterogeneous graph as input
         self.layers = nn.ModuleList()
 
-        # for each relation_layer
         self.layers.append(
             R_HGNN_Layer(graph, hidden_dim * n_heads, hidden_dim, relation_input_dim, relation_hidden_dim, n_heads,
                          dropout, negative_slope, residual, norm))
@@ -959,7 +610,6 @@ class R_HGNN(nn.Module):
         self.reset_parameters()
 
     def reset_parameters(self):
-        """Reinitialize learnable parameters."""
         gain = nn.init.calculate_gain('relu')
 
         for etype in self.relation_embedding:
@@ -972,15 +622,8 @@ class R_HGNN(nn.Module):
             nn.init.xavier_normal_(self.relation_transformation_weight[etype], gain=gain)
 
     def forward(self, blocks: list, relation_target_node_features: dict, relation_embedding: dict = None, mask = None):
-        """
 
-        :param blocks: list of sampled dgl.DGLHeteroGraph
-        :param relation_target_node_features: target node features under each relation, dict, {(srctype, etype, dsttype): features}
-        :param relation_embedding: embedding for each relation, dict, {etype: feature} or None
-        :return:
-        """
 
-        # target relation feature projection
         for stype, reltype, dtype in relation_target_node_features:
             relation_target_node_features[(stype, reltype, dtype)] = self.projection_layer[dtype](
                 relation_target_node_features[(stype, reltype, dtype)])
@@ -990,7 +633,6 @@ class R_HGNN(nn.Module):
             for etype in self.relation_embedding:
                 relation_embedding[etype] = self.relation_embedding[etype].flatten()
 
-        # graph convolution
         i = 0
         for block, layer in zip(blocks, self.layers):
             if mask is not None:
@@ -1009,19 +651,7 @@ class R_HGNN_Layer(nn.Module):
     def __init__(self, graph: dgl.DGLHeteroGraph, input_dim: int, hidden_dim: int, relation_input_dim: int,
                  relation_hidden_dim: int, n_heads: int = 8, dropout: float = 0.2, negative_slope: float = 0.2,
                  residual: bool = True, norm: bool = False):
-        """
 
-        :param graph: a heterogeneous graph
-        :param input_dim: int, node input dimension
-        :param hidden_dim: int, node hidden dimension
-        :param relation_input_dim: int, relation input dimension
-        :param relation_hidden_dim: int, relation hidden dimension
-        :param n_heads: int, number of attention heads
-        :param dropout: float, dropout rate
-        :param negative_slope: float, negative slope
-        :param residual: boolean, residual connections or not
-        :param norm: boolean, layer normalization or not
-        """
         super(R_HGNN_Layer, self).__init__()
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim
@@ -1033,25 +663,21 @@ class R_HGNN_Layer(nn.Module):
         self.residual = residual
         self.norm = norm
 
-        # node transformation parameters of each type
         self.node_transformation_weight = nn.ParameterDict({
             ntype: nn.Parameter(torch.randn(input_dim, n_heads * hidden_dim))
             for ntype in graph.ntypes
         })
 
-        # relation transformation parameters of each type, used as attention queries
         self.relation_transformation_weight = nn.ParameterDict({
             etype: nn.Parameter(torch.randn(relation_input_dim, n_heads * 2 * hidden_dim))
             for etype in graph.etypes
         })
 
-        # relation propagation layer of each relation
         self.relation_propagation_layer = nn.ModuleDict({
             etype: nn.Linear(relation_input_dim, n_heads * relation_hidden_dim)
             for etype in graph.etypes
         })
 
-        # hetero conv modules, each RelationGraphConv deals with a single type of relation
         self.hetero_conv = HeteroGraphConv({
             etype: RelationGraphConv(in_feats=(input_dim, input_dim), out_feats=hidden_dim,
                                      num_heads=n_heads, dropout=dropout, negative_slope=negative_slope)
@@ -1059,7 +685,6 @@ class R_HGNN_Layer(nn.Module):
         })
 
         if self.residual:
-            # residual connection
             self.res_fc = nn.ModuleDict()
             self.residual_weight = nn.ParameterDict()
             for ntype in graph.ntypes:
@@ -1069,12 +694,10 @@ class R_HGNN_Layer(nn.Module):
         if self.norm:
             self.layer_norm = nn.ModuleDict({ntype: nn.LayerNorm(n_heads * hidden_dim) for ntype in graph.ntypes})
 
-        # relation type crossing attention trainable parameters
         self.relations_crossing_attention_weight = nn.ParameterDict({
             etype: nn.Parameter(torch.randn(n_heads, hidden_dim))
             for etype in graph.etypes
         })
-        # different relations crossing layer
         self.relations_crossing_layer = RelationCrossing(in_feats=n_heads * hidden_dim,
                                                          out_feats=hidden_dim,
                                                          num_heads=n_heads,
@@ -1084,7 +707,6 @@ class R_HGNN_Layer(nn.Module):
         self.reset_parameters()
 
     def reset_parameters(self):
-        """Reinitialize learnable parameters."""
         gain = nn.init.calculate_gain('relu')
         for weight in self.node_transformation_weight:
             nn.init.xavier_normal_(self.node_transformation_weight[weight], gain=gain)
@@ -1099,16 +721,7 @@ class R_HGNN_Layer(nn.Module):
             nn.init.xavier_normal_(self.relations_crossing_attention_weight[weight], gain=gain)
 
     def forward(self, graph: dgl.DGLHeteroGraph, relation_target_node_features: dict, relation_embedding: dict, mask = None):
-        """
 
-        :param graph: dgl.DGLHeteroGraph
-        :param relation_target_node_features: dict, {relation_type: target_node_features shape (N_nodes, input_dim)},
-               each value in relation_target_node_features represents the representation of target node features
-        :param relation_embedding: embedding for each relation, dict, {etype: feature}
-        :return: output_features: dict, {relation_type: target_node_features}
-        """
-        # in each relation, target type of nodes has an embedding
-        # dictionary of {(srctype, etypye, dsttype): target_node_features}
         input_src = relation_target_node_features
 
         if graph.is_block:
@@ -1119,11 +732,9 @@ class R_HGNN_Layer(nn.Module):
         else:
             input_dst = relation_target_node_features
 
-        # output_features, dict {(srctype, etypye, dsttype): target_node_features}
         output_features = self.hetero_conv(graph, input_src, input_dst, relation_embedding,
                                            self.node_transformation_weight, self.relation_transformation_weight)
 
-        # residual connection for the target node
         if self.residual:
             for srctype, etype, dsttype in output_features:
                 alpha = F.sigmoid(self.residual_weight[dsttype])
@@ -1132,8 +743,6 @@ class R_HGNN_Layer(nn.Module):
                                                                  input_dst[(srctype, etype, dsttype)]) * (1 - alpha)
         output_features_dict = {}
 
-        # different relations crossing layer
-        time0 = time.time()
         for srctype, etype, dsttype in output_features:
             if mask is not None:
                 dst_node_relations_features = torch.stack([output_features[(stype, reltype, dtype)]
@@ -1141,19 +750,15 @@ class R_HGNN_Layer(nn.Module):
 
                 mask_t1 = torch.stack([mask[(stype, reltype, dtype)]
                                                    for stype, reltype, dtype in output_features.keys() if dtype == dsttype], dim=0)
-                time2 = time.time()
                 mask_t = fill_mask(mask_t1, self.n_heads).to(dst_node_relations_features.device)
-                time3 = time.time()
 
                 output_features_dict[(srctype, etype, dsttype)] = self.relations_crossing_layer(
                     dst_node_relations_features,
                     self.relations_crossing_attention_weight[etype],
-                    mask=mask_t)#又是874M显存，每过一次基本上都增加显存
-                time4 = time.time()
+                    mask=mask_t)
                 output_features_dict[(srctype, etype, dsttype)] = output_features_dict[(srctype, etype, dsttype)] * \
                                                                   fill_mask1(mask[(srctype, etype, dsttype)], self.hidden_dim * self.n_heads).to(
                                                                       dst_node_relations_features.device)
-                time5 = time.time()
             else:
                 dst_node_relations_features = torch.stack([output_features[(stype, reltype, dtype)]
                      for stype, reltype, dtype in output_features if dtype == dsttype], dim=0)
@@ -1163,7 +768,6 @@ class R_HGNN_Layer(nn.Module):
                     self.relations_crossing_attention_weight[etype],
                     mask=None)
 
-        time1 = time.time()
 
         if self.norm:
             for srctype, etype, dsttype in output_features_dict:
@@ -1176,20 +780,6 @@ class R_HGNN_Layer(nn.Module):
         return output_features_dict, relation_embedding_dict
 
 class HeteroGraphConv(nn.Module):
-    r"""A generic module for computing convolution on heterogeneous graphs.
-
-    The heterograph convolution applies sub-modules on their associating
-    relation graphs, which reads the features from source nodes and writes the
-    updated ones to destination nodes. If multiple relations have the same
-    destination node types, their results are aggregated by the specified method.
-
-    If the relation graph has no edge, the corresponding module will not be called.
-
-    Parameters
-    ----------
-    mods : dict[str, nn.Module]
-        Modules associated with every edge types.
-    """
 
     def __init__(self, mods: dict):
         super(HeteroGraphConv, self).__init__()
@@ -1197,24 +787,7 @@ class HeteroGraphConv(nn.Module):
 
     def forward(self, graph: dgl.DGLHeteroGraph, input_src: dict, input_dst: dict, relation_embedding: dict,
                 node_transformation_weight: nn.ParameterDict, relation_transformation_weight: nn.ParameterDict):
-        """
-        call the forward function with each module.
 
-        Parameters
-        ----------
-        graph: DGLHeteroGraph, The Heterogeneous Graph.
-        input_src: dict[tuple, Tensor], Input source node features {relation_type: features, }
-        input_dst: dict[tuple, Tensor], Input destination node features {relation_type: features, }
-        relation_embedding: dict[etype, Tensor], Input relation features {etype: feature}
-        node_transformation_weight: nn.ParameterDict, weights {ntype, (inp_dim, hidden_dim)}
-        relation_transformation_weight: nn.ParameterDict, weights {etype, (n_heads, 2 * hidden_dim)}
-
-        Returns
-        -------
-        outputs, dict[tuple, Tensor]  Output representations for every relation -> {(stype, etype, dtype): features}.
-        """
-
-        # find reverse relation dict
         reverse_relation_dict = {}
         for srctype, reltype, dsttype in list(input_src.keys()):
             for stype, etype, dtype in input_src:
@@ -1222,14 +795,12 @@ class HeteroGraphConv(nn.Module):
                     reverse_relation_dict[reltype] = etype
                     break
 
-        # dictionary, {(srctype, etype, dsttype): representations}
         outputs = dict()
 
         for stype, etype, dtype in graph.canonical_etypes:
             rel_graph = graph[stype, etype, dtype]
             if rel_graph.number_of_edges() == 0:
                 continue
-            # for example, (author, writes, paper) relation, take author as src_nodes, take paper as dst_nodes
             dst_representation = self.mods[etype](rel_graph,
                                                   (input_src[(dtype, reverse_relation_dict[etype], stype)],
                                                    input_dst[(stype, etype, dtype)]),
@@ -1238,24 +809,13 @@ class HeteroGraphConv(nn.Module):
                                                   relation_embedding[etype],
                                                   relation_transformation_weight[etype])
 
-            # dst_representation (dst_nodes, hid_dim)
             outputs[(stype, etype, dtype)] = dst_representation
-        #这个for循环过去，每进行一次卷积操作，显存就增加很多，9368-》11500
         return outputs
 
 class RelationGraphConv(nn.Module):
 
     def __init__(self, in_feats: tuple, out_feats: int, num_heads: int, dropout: float = 0.0, negative_slope: float = 0.2):
-        """
-        Relation graph convolution layer
-        Parameters
-        ----------
-        in_feats : pair of ints, input feature size
-        out_feats : int, output feature size
-        num_heads : int, number of heads in Multi-Head Attention
-        dropout : float, optional, dropout rate, defaults: 0
-        negative_slope : float, optional, negative slope rate, defaults: 0.2
-        """
+
         super(RelationGraphConv, self).__init__()
         self._in_src_feats, self._in_dst_feats = in_feats[0], in_feats[1]
         self._out_feats = out_feats
@@ -1268,54 +828,25 @@ class RelationGraphConv(nn.Module):
     def forward(self, graph: dgl.DGLHeteroGraph, feat: tuple, dst_node_transformation_weight: nn.Parameter,
                 src_node_transformation_weight: nn.Parameter, relation_embedding: torch.Tensor,
                 relation_transformation_weight: nn.Parameter):
-        r"""
 
-        Parameters
-        ----------
-        graph : specific relational DGLHeteroGraph
-        feat : pair of torch.Tensor
-            The pair contains two tensors of shape (N_{in}, D_{in_{src}})` and (N_{out}, D_{in_{dst}}).
-        dst_node_transformation_weight: Parameter (input_dst_dim, n_heads * hidden_dim)
-        src_node_transformation_weight: Parameter (input_src_dim, n_heads * hidden_dim)
-        relation_embedding: torch.Tensor, (relation_input_dim)
-        relation_transformation_weight: Parameter (relation_input_dim, n_heads * 2 * hidden_dim)
-
-        Returns
-        -------
-        torch.Tensor, shape (N, H, D_out)` where H is the number of heads, and D_out is size of output feature.
-        """
         graph = graph.local_var()
-        # Tensor, (N_src, input_src_dim)
         feat_src = self.dropout(feat[0])
-        # Tensor, (N_dst, input_dst_dim)
         feat_dst = self.dropout(feat[1])
-        # Tensor, (N_src, n_heads, hidden_dim) -> (N_src, input_src_dim) * (input_src_dim, n_heads * hidden_dim)
         feat_src = torch.matmul(feat_src, src_node_transformation_weight).view(-1, self._num_heads, self._out_feats)
-        # Tensor, (N_dst, n_heads, hidden_dim) -> (N_dst, input_dst_dim) * (input_dst_dim, n_heads * hidden_dim)
         feat_dst = torch.matmul(feat_dst, dst_node_transformation_weight).view(-1, self._num_heads, self._out_feats)
-        # Tensor, (n_heads, 2 * hidden_dim) -> (1, input_dst_dim) * (input_dst_dim, n_heads * hidden_dim)
         relation_attention_weight = torch.matmul(relation_embedding.unsqueeze(dim=0), relation_transformation_weight).view(self._num_heads, 2 * self._out_feats)
 
-        # first decompose the weight vector into [a_l || a_r], then
-        # a^T [Wh_i || Wh_j] = a_l Wh_i + a_r Wh_j, This implementation is much efficient
-        # Tensor, (N_dst, n_heads, 1),   (N_dst, n_heads, hidden_dim) * (n_heads, hidden_dim)
+
         e_dst = (feat_dst * relation_attention_weight[:, :self._out_feats]).sum(dim=-1, keepdim=True)
-        # Tensor, (N_src, n_heads, 1),   (N_src, n_heads, hidden_dim) * (n_heads, hidden_dim)
         e_src = (feat_src * relation_attention_weight[:, self._out_feats:]).sum(dim=-1, keepdim=True)
-        # (N_src, n_heads, hidden_dim), (N_src, n_heads, 1)
         graph.srcdata.update({'ft': feat_src, 'e_src': e_src})
-        # (N_dst, n_heads, 1)
         graph.dstdata.update({'e_dst': e_dst})
-        # compute edge attention, e_src and e_dst are a_src * Wh_src and a_dst * Wh_dst respectively.
         graph.apply_edges(fn.u_add_v('e_src', 'e_dst', 'e'))
-        # shape (edges_num, heads, 1)
         e = self.leaky_relu(graph.edata.pop('e'))
 
-        # compute softmax
         graph.edata['a'] = edge_softmax(graph, e)
 
         graph.update_all(fn.u_mul_e('ft', 'a', 'msg'), fn.sum('msg', 'feat'))
-        # (N_dst, n_heads * hidden_dim), reshape (N_dst, n_heads, hidden_dim)
         dst_features = graph.dstdata.pop('feat').reshape(-1, self._num_heads * self._out_feats)
 
         dst_features = self.relu(dst_features)
@@ -1325,16 +856,7 @@ class RelationGraphConv(nn.Module):
 class RelationCrossing(nn.Module):
 
     def __init__(self, in_feats: int, out_feats: int, num_heads: int, dropout: float = 0.0, negative_slope: float = 0.2):
-        """
-        Relation crossing layer
-        Parameters
-        ----------
-        in_feats : pair of ints, input feature size
-        out_feats : int, output feature size
-        num_heads : int, number of heads in Multi-Head Attention
-        dropout : float, optional, dropout rate, defaults: 0.0
-        negative_slope : float, optional, negative slope rate, defaults: 0.2
-        """
+
         super(RelationCrossing, self).__init__()
         self._in_feats = in_feats
         self._out_feats = out_feats
@@ -1344,102 +866,23 @@ class RelationCrossing(nn.Module):
         self.leaky_relu = nn.LeakyReLU(negative_slope)
 
     def forward(self, dsttype_node_features: torch.Tensor, relations_crossing_attention_weight: nn.Parameter, mask=None):
-        """
-        :param dsttype_node_features: a tensor of (dsttype_node_relations_num, num_dst_nodes, n_heads * hidden_dim)
-        :param relations_crossing_attention_weight: Parameter the shape is (n_heads, hidden_dim)
-        :return: output_features: a Tensor
-        """
+
         if len(dsttype_node_features) == 1:
-            # (num_dst_nodes, n_heads * hidden_dim)
             dsttype_node_features = dsttype_node_features.squeeze(dim=0)
         else:
-            # (dsttype_node_relations_num, num_dst_nodes, n_heads, hidden_dim)
             dsttype_node_features = dsttype_node_features.reshape(dsttype_node_features.shape[0], -1, self._num_heads, self._out_feats)
-            # shape -> (dsttype_node_relations_num, dst_nodes_num, n_heads, 1),  (dsttype_node_relations_num, dst_nodes_num, n_heads, hidden_dim) * (n_heads, hidden_dim)
             dsttype_node_relation_attention = (dsttype_node_features * relations_crossing_attention_weight).sum(dim=-1, keepdim=True)
             if mask is not None:
                 dsttype_node_relation_attention = self.leaky_relu(dsttype_node_relation_attention) * (mask.unsqueeze(-1))
             else:
                 dsttype_node_relation_attention = self.leaky_relu(dsttype_node_relation_attention)
             dsttype_node_relation_attention = F.softmax(dsttype_node_relation_attention, dim=0)
-            # shape -> (dst_nodes_num, n_heads, hidden_dim),  (dsttype_node_relations_num, dst_nodes_num, n_heads, hidden_dim) * (dsttype_node_relations_num, dst_nodes_num, n_heads, 1)
             dsttype_node_features = (dsttype_node_features * dsttype_node_relation_attention).sum(dim=0)
             dsttype_node_features = self.dropout(dsttype_node_features)
-            # shape -> (dst_nodes_num, n_heads * hidden_dim)
             dsttype_node_features = dsttype_node_features.reshape(-1, self._num_heads * self._out_feats)
 
         return dsttype_node_features
 
-class RelationFusing(nn.Module):
-
-    def __init__(self, node_hidden_dim: int, relation_hidden_dim: int, num_heads: int, dropout: float = 0.0,
-                 negative_slope: float = 0.2):
-        """
-
-        :param node_hidden_dim: int, node hidden feature size
-        :param relation_hidden_dim: int,relation hidden feature size
-        :param num_heads: int, number of heads in Multi-Head Attention
-        :param dropout: float, dropout rate, defaults: 0.0
-        :param negative_slope: float, negative slope, defaults: 0.2
-        """
-        super(RelationFusing, self).__init__()
-        self.node_hidden_dim = node_hidden_dim
-        self.relation_hidden_dim = relation_hidden_dim
-        self.num_heads = num_heads
-
-        self.dropout = nn.Dropout(dropout)
-        self.leaky_relu = nn.LeakyReLU(negative_slope)
-
-    def forward(self, dst_node_features: list, dst_relation_embeddings: list,
-                dst_node_feature_transformation_weight: list,
-                dst_relation_embedding_transformation_weight: list):
-        """
-        :param dst_node_features: list, [each shape is (num_dst_nodes, n_heads * node_hidden_dim)]
-        :param dst_relation_embeddings: list, [each shape is (n_heads * relation_hidden_dim)]
-        :param dst_node_feature_transformation_weight: list, [each shape is (n_heads, node_hidden_dim, node_hidden_dim)]
-        :param dst_relation_embedding_transformation_weight:  list, [each shape is (n_heads, relation_hidden_dim, relation_hidden_dim)]
-        :return: dst_node_relation_fusion_feature: Tensor of the target node representation after relation-aware representations fusion
-        """
-        if len(dst_node_features) == 1:
-            # (num_dst_nodes, n_heads * hidden_dim)
-            dst_node_relation_fusion_feature = dst_node_features[0]
-        else:
-            # (num_dst_relations, nodes, n_heads, node_hidden_dim)
-            dst_node_features = torch.stack(dst_node_features, dim=0).reshape(len(dst_node_features), -1,
-                                                                              self.num_heads, self.node_hidden_dim)
-            # (num_dst_relations, n_heads, relation_hidden_dim)
-            dst_relation_embeddings = torch.stack(dst_relation_embeddings, dim=0).reshape(len(dst_node_features),
-                                                                                          self.num_heads,
-                                                                                          self.relation_hidden_dim)
-            # (num_dst_relations, n_heads, node_hidden_dim, node_hidden_dim)
-            dst_node_feature_transformation_weight = torch.stack(dst_node_feature_transformation_weight, dim=0).reshape(
-                len(dst_node_features), self.num_heads,
-                self.node_hidden_dim, self.node_hidden_dim)
-            # (num_dst_relations, n_heads, relation_hidden_dim, relation_hidden_dim)
-            dst_relation_embedding_transformation_weight = torch.stack(dst_relation_embedding_transformation_weight,
-                                                                       dim=0).reshape(len(dst_node_features),
-                                                                                      self.num_heads,
-                                                                                      self.relation_hidden_dim,
-                                                                                      self.node_hidden_dim)
-            # shape (num_dst_relations, nodes, n_heads, hidden_dim)
-            dst_node_features = torch.einsum('abcd,acde->abce', dst_node_features,
-                                             dst_node_feature_transformation_weight)
-
-            # shape (num_dst_relations, n_heads, hidden_dim)
-            dst_relation_embeddings = torch.einsum('abc,abcd->abd', dst_relation_embeddings,
-                                                   dst_relation_embedding_transformation_weight)
-
-            # shape (num_dst_relations, nodes, n_heads, 1)
-            attention_scores = (dst_node_features * dst_relation_embeddings.unsqueeze(dim=1)).sum(dim=-1, keepdim=True)
-            attention_scores = F.softmax(self.leaky_relu(attention_scores), dim=0)
-            # (nodes, n_heads, hidden_dim)
-            dst_node_relation_fusion_feature = (dst_node_features * attention_scores).sum(dim=0)
-            dst_node_relation_fusion_feature = self.dropout(dst_node_relation_fusion_feature)
-            # (nodes, n_heads * hidden_dim)
-            dst_node_relation_fusion_feature = dst_node_relation_fusion_feature.reshape(-1,
-                                                                                        self.num_heads * self.node_hidden_dim)
-
-        return dst_node_relation_fusion_feature
 
 class LandmarkMarkMatchs(nn.Module):
     def __init__(self, args):
@@ -1470,7 +913,6 @@ class LandmarkMarkMatchs(nn.Module):
             str(et): LandmarkMarkMatch(args=args).to(self.args.device)
             for et in self.graph.canonical_etypes
         })
-        # self.matching = LandmarkMarkMatch(args=args).to(self.args.device)
         self.weighted_sum = nn.Linear(4, 1, bias=False)
         self.sematic_predict = SemanticAttention(args.hidden_dim_GRU)
         self.predict2 = nn.Linear(args.hidden_dim_GRU, 1)
@@ -1520,16 +962,13 @@ class LandmarkMarkMatchs(nn.Module):
                 else:
                     change_embeddings[key].append(torch.zeros((1, self.args.hidden_dim_GRU), device=self.args.device))
                     mask[key].append(False)
-        change_embeddings_t = torch.stack([torch.stack(change_embeddings[key]) for key in change_embeddings.keys()]).contiguous().squeeze()
         masked = torch.tensor([mask[key] for key in mask.keys()]).to(self.args.device)
-        mask_sim = self.cal_sim_score(change_embeddings=change_embeddings_t, edges_embeddings= edges_embeddings, mask=masked)
 
 
         change_socres, change_socres_eb, sim_cs, zloss = {}, {}, {}, {}
         for key in change_embeddings.keys():
             change_socres[key], change_socres_eb[key], sim_cs[key], zloss[key] = self.matchings[str(key)](torch.stack(change_embeddings[key]).squeeze(),istest)
 
-        temp = torch.stack([torch.stack([change_socres[key] for key in change_socres.keys()])]).contiguous().squeeze().transpose(0, 1)
         temp1 = torch.stack([torch.stack([change_socres_eb[key] for key in change_socres_eb.keys()])]).contiguous().squeeze().transpose(0, 1)
         sim_cs = sim_cs
         mask_eb = masked.int().unsqueeze(-1).expand(-1, -1, self.args.hidden_dim_GRU).transpose(0, 1)
@@ -1561,13 +1000,8 @@ class cal_sim_temp(nn.Module):
         for i in range(change_embeddings.size(0)):
             q = self.to_q(change_embeddings[i])
 
-            # k, q = map(lambda t: repeat(t, 'n d ->b n d', b=1), (k, q))
-            # q, k = map(lambda t: rearrange(t, 'b n (h dim) -> (b h) n dim', h=self.heads),
-            #               (q, k))
-
             sim = einsum('i d,j d -> i j', q, k) * (self.inner_dim ** -0.5)
             sim = torch.diag(sim)
-            # sim = rearrange(sim, '(b h) n d -> b n (h d)', h=self.heads)
 
             sim_all.append(sim)
         sim_all = torch.stack(sim_all)
@@ -1634,7 +1068,6 @@ class M_cross_layers(nn.Module):
             for _ in range(num_layers)])
 
     def forward(self, M, X,to_kv):
-        '''块内不参数共享'''
 
         for layer in self.layer_stack:
             output =layer(M,X,to_kv)
@@ -1674,23 +1107,17 @@ class cross_att(nn.Module):
         self.mutl_heads =nn.Linear(self.inner_dim, M_dim)
 
     def forward(self, M, X,to_kv):
-        '''
-        :param M: e x c
-        :param X: node_num x d
-        :return:
-        '''
 
-        M, X = map(lambda t: repeat(t, 'n d ->b n d', b=1), (M, X))  # 添加维度 1 x e x c / 1 x node_num x d
+        M, X = map(lambda t: repeat(t, 'n d ->b n d', b=1), (M, X))
 
-        q = self.to_q(M)  # 1 x e x inner
-        k, v = to_kv(X).chunk(2, dim=-1)  # 1 x node_num x inner
+        q = self.to_q(M)
+        k, v = to_kv(X).chunk(2, dim=-1)
 
         q, k, v = map(lambda t: rearrange(t, 'b n (h dim) -> (b h) n dim', h=self.heads),
-                      (q, k, v))  # h x n x dim_heads
+                      (q, k, v))
 
         sim = einsum('b i d,b j d -> b i j', q, k) * (self.dim_heads ** -0.5)
 
-        # mask_sim=sim.masked_fill(mask==False,-1e9)
         mask_sim=F.softmax(sim, dim=-1)
 
         out_M = einsum('b i j, b j d -> b i d', mask_sim, v)
@@ -1702,9 +1129,6 @@ class cross_att(nn.Module):
         return out
 
 class SublayerConnection(nn.Module):
-    """
-    实现子层连接结构的类 res+norm
-    """
     def __init__(self, dropout):
         super(SublayerConnection, self).__init__()
         self.dropout = nn.Dropout(dropout)
